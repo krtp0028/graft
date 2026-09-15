@@ -16,12 +16,21 @@
     "check": "tsc --noEmit && npm run lint && npm run format:check && npm run test"
   },
   "dependencies": {
+    "@codemirror/lang-markdown": "^6.5.2",
     "@tauri-apps/api": "^2",
-    "@tauri-apps/plugin-opener": "^2"
+    "@tauri-apps/plugin-dialog": "^2.7.3",
+    "@tauri-apps/plugin-opener": "^2",
+    "codemirror": "^6.0.2",
+    "dompurify": "^3.4.15",
+    "highlight.js": "^11.12.0",
+    "markdown-it": "^15.0.2",
+    "smol-toml": "^1.8.0",
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@tauri-apps/cli": "^2",
+    "@types/markdown-it": "^14.2.0",
     "eslint": "^10.10.0",
     "prettier": "^3.9.6",
     "typescript": "~6.0.3",

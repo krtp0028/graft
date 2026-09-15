@@ -1,5 +1,22 @@
 export type KeymapContext = "global" | "editor" | "tree" | "preview" | "input";
 
+export interface KeyBinding {
+  chord: string;
+  command: string;
+  context: KeymapContext;
+}
+
+export const DEFAULT_KEYMAP: readonly KeyBinding[] = [
+  { chord: "Mod+Shift+V", command: "preview.cycle_position", context: "global" },
+  { chord: "Mod+O", command: "vault.open", context: "global" },
+  { chord: "Mod+Shift+P", command: "palette.open", context: "global" },
+  { chord: "Mod+S", command: "file.save", context: "global" },
+  { chord: "Mod+P", command: "file.quick_open", context: "global" },
+  { chord: "Mod+Shift+F", command: "search.open", context: "global" },
+  { chord: "Mod+W", command: "tab.close", context: "global" },
+  { chord: "Mod+Shift+T", command: "tab.reopen_last", context: "global" },
+];
+
 export interface Chord {
   key: string;
   ctrl: boolean;
