@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "graft",
+  "productName": "Graft",
   "version": "0.1.0",
   "identifier": "com.krtp.graft",
   "build": {
@@ -13,9 +13,11 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "graft",
-        "width": 800,
-        "height": 600
+        "title": "Graft",
+        "width": 1100,
+        "height": 720,
+        "minWidth": 720,
+        "minHeight": 480
       }
     ],
     "security": {
