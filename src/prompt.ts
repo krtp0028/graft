@@ -35,13 +35,11 @@ export function promptText(parent: HTMLElement, options: PromptOptions): Promise
     };
 
     cancel.addEventListener("click", () => finish(null));
-    confirm.addEventListener("click", () =>
-      finish(input.value.trim() === "" ? null : input.value.trim()),
-    );
+    confirm.addEventListener("click", () => finish(input.value.trim()));
     input.addEventListener("keydown", (event) => {
       if (event.key === "Enter") {
         event.preventDefault();
-        finish(input.value.trim() === "" ? null : input.value.trim());
+        finish(input.value.trim());
       } else if (event.key === "Escape") {
         event.preventDefault();
         finish(null);

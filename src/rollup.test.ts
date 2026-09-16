@@ -19,6 +19,8 @@ const node = (
   dangling: false,
   order: null,
   placements: [relPath],
+  color: null,
+  icon: null,
 });
 
 const entry = (relPath: string, open: number, done: number, hours: number | null): FileMeta => ({
@@ -31,9 +33,11 @@ const entry = (relPath: string, open: number, done: number, hours: number | null
     alsoUnder: [],
     order: null,
     tags: [],
+    color: null,
+    icon: null,
     numbers: hours === null ? {} : { hours },
   },
-  metrics: { tasksOpen: open, tasksDone: done, words: 10, links: [] },
+  metrics: { tasksOpen: open, tasksDone: done, words: 10, links: [], tasks: [] },
 });
 
 describe("computeRollups", () => {

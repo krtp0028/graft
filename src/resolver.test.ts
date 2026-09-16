@@ -22,9 +22,11 @@ const meta = (relPath: string, options: MetaOptions = {}): FileMeta => ({
     alsoUnder: options.alsoUnder ?? [],
     order: options.order ?? null,
     tags: options.tags ?? [],
+    color: null,
+    icon: null,
     numbers: {},
   },
-  metrics: { tasksOpen: 0, tasksDone: 0, words: 0, links: [] },
+  metrics: { tasksOpen: 0, tasksDone: 0, words: 0, links: [], tasks: [] },
 });
 
 const find = (nodes: TreeNode[], relPath: string): TreeNode | undefined => {

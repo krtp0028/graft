@@ -7,8 +7,16 @@ const entry = (relPath: string, tasksOpen = 0): FileMeta => ({
   isDir: false,
   size: 1,
   modifiedMs: 0,
-  frontmatter: { parent: null, alsoUnder: [], order: null, tags: [], numbers: {} },
-  metrics: { tasksOpen, tasksDone: 0, words: 0, links: [] },
+  frontmatter: {
+    parent: null,
+    alsoUnder: [],
+    order: null,
+    tags: [],
+    color: null,
+    icon: null,
+    numbers: {},
+  },
+  metrics: { tasksOpen, tasksDone: 0, words: 0, links: [], tasks: [] },
 });
 
 describe("parseSearchQuery", () => {

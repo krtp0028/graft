@@ -25,7 +25,16 @@ pub struct Frontmatter {
     pub also_under: Vec<String>,
     pub order: Option<f64>,
     pub tags: Vec<String>,
+    pub color: Option<String>,
+    pub icon: Option<String>,
     pub numbers: BTreeMap<String, f64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskItem {
+    pub line: u32,
+    pub text: String,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
@@ -35,6 +44,7 @@ pub struct FileMetrics {
     pub tasks_done: u32,
     pub words: u32,
     pub links: Vec<String>,
+    pub tasks: Vec<TaskItem>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -71,6 +81,10 @@ pub fn read_file(root: &str, rel_path: &str) -> Result<String, String> {
 }
 
 pub fn write_file(root: &str, rel_path: &str, contents: &str) -> Result<(), String> {
+    write_bytes(root, rel_path, contents.as_bytes())
+}
+
+pub fn write_bytes(root: &str, rel_path: &str, contents: &[u8]) -> Result<(), String> {
     let path = resolve(root, rel_path)?;
     let parent = path
         .parent()
@@ -85,7 +99,7 @@ pub fn write_file(root: &str, rel_path: &str, contents: &str) -> Result<(), Stri
 
     let result = (|| -> std::io::Result<()> {
         let mut file = fs::File::create(&temp_path)?;
-        file.write_all(contents.as_bytes())?;
+        file.write_all(contents)?;
         file.sync_all()?;
         drop(file);
         fs::rename(&temp_path, &path)
@@ -97,6 +111,30 @@ pub fn write_file(root: &str, rel_path: &str, contents: &str) -> Result<(), Stri
     }
 
     Ok(())
+}
+
+pub fn write_binary(root: &str, rel_path: &str, base64_data: &str) -> Result<(), String> {
+    use base64::Engine;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(base64_data)
+        .map_err(|error| format!("invalid base64 data: {error}"))?;
+    if bytes.len() as u64 > MAX_FILE_BYTES {
+        return Err(format!("file is too large to write: {rel_path}"));
+    }
+    write_bytes(root, rel_path, &bytes)
+}
+
+pub fn import_external(root: &str, source: &str, rel_path: &str) -> Result<(), String> {
+    let path = Path::new(source);
+    if !path.is_file() {
+        return Err(format!("source file does not exist: {source}"));
+    }
+    let metadata = fs::metadata(path).map_err(|error| error.to_string())?;
+    if metadata.len() > MAX_FILE_BYTES {
+        return Err(format!("file is too large to import: {source}"));
+    }
+    let bytes = fs::read(path).map_err(|error| error.to_string())?;
+    write_bytes(root, rel_path, &bytes)
 }
 
 fn resolve(root: &str, rel_path: &str) -> Result<PathBuf, String> {
@@ -368,6 +406,18 @@ fn apply_scalar(frontmatter: &mut Frontmatter, key: &str, value: &str) {
                 frontmatter.order = Some(parsed);
             }
         }
+        "color" => {
+            let cleaned = strip_quotes(value);
+            if !cleaned.is_empty() {
+                frontmatter.color = Some(cleaned);
+            }
+        }
+        "icon" => {
+            let cleaned = strip_quotes(value);
+            if !cleaned.is_empty() {
+                frontmatter.icon = Some(cleaned);
+            }
+        }
         _ => {}
     }
     if let Ok(parsed) = strip_quotes(value).parse::<f64>() {
@@ -440,7 +490,7 @@ pub fn count_metrics(head: &str) -> FileMetrics {
         ..FileMetrics::default()
     };
 
-    for line in head.lines() {
+    for (index, line) in head.lines().enumerate() {
         let trimmed = line.trim_start();
         let Some(rest) = trimmed
             .strip_prefix("- ")
@@ -451,6 +501,18 @@ pub fn count_metrics(head: &str) -> FileMetrics {
         };
         if rest.starts_with("[ ]") {
             metrics.tasks_open += 1;
+            if metrics.tasks.len() < 200 {
+                let text: String = rest
+                    .trim_start_matches("[ ]")
+                    .trim()
+                    .chars()
+                    .take(200)
+                    .collect();
+                metrics.tasks.push(TaskItem {
+                    line: (index + 1) as u32,
+                    text,
+                });
+            }
         } else if rest.starts_with("[x]") || rest.starts_with("[X]") {
             metrics.tasks_done += 1;
         }
@@ -760,6 +822,48 @@ mod tests {
         assert!(super::trash_restore(root, "../escape").is_err());
         assert!(super::trash_restore(root, "a/b").is_err());
 
+        fs::remove_dir_all(vault).unwrap();
+    }
+
+    #[test]
+    fn parses_color_and_icon_frontmatter() {
+        let head = "---\ncolor: \"#c0392b\"\nicon: \"*\"\n---\n";
+        let frontmatter = super::parse_frontmatter(head).unwrap();
+        assert_eq!(frontmatter.color.as_deref(), Some("#c0392b"));
+        assert_eq!(frontmatter.icon.as_deref(), Some("*"));
+    }
+
+    #[test]
+    fn extracts_open_task_items_with_line_numbers() {
+        let head = "# title\n- [ ] first\n- [x] done\n  - [ ] second\n";
+        let metrics = super::count_metrics(head);
+        assert_eq!(metrics.tasks_open, 2);
+        assert_eq!(metrics.tasks.len(), 2);
+        assert_eq!(metrics.tasks[0].line, 2);
+        assert_eq!(metrics.tasks[0].text, "first");
+        assert_eq!(metrics.tasks[1].line, 4);
+        assert_eq!(metrics.tasks[1].text, "second");
+    }
+
+    #[test]
+    fn writes_binary_and_imports_external_files() {
+        use base64::Engine;
+        let vault = temp_vault();
+        let root = vault.to_str().unwrap();
+
+        let encoded = base64::engine::general_purpose::STANDARD.encode(b"binary-data");
+        super::write_binary(root, "assets/a.bin", &encoded).unwrap();
+        assert_eq!(
+            fs::read(vault.join("assets/a.bin")).unwrap(),
+            b"binary-data"
+        );
+
+        let source = vault.join("source.bin");
+        fs::write(&source, b"imported").unwrap();
+        super::import_external(root, source.to_str().unwrap(), "assets/b.bin").unwrap();
+        assert_eq!(fs::read(vault.join("assets/b.bin")).unwrap(), b"imported");
+
+        assert!(super::write_binary(root, "assets/c.bin", "not base64!!").is_err());
         fs::remove_dir_all(vault).unwrap();
     }
 

@@ -2,6 +2,7 @@ import { basicSetup } from "codemirror";
 import { markdown } from "@codemirror/lang-markdown";
 import { Compartment, EditorState } from "@codemirror/state";
 import { EditorView, keymap } from "@codemirror/view";
+import * as api from "./api";
 import { config } from "./config";
 import type { AppConfig } from "./config";
 import type { VaultStore } from "./store";
@@ -52,6 +53,50 @@ function fontSizeTheme(fontSize: number): ReturnType<typeof EditorView.theme> {
 
 const isMarkdownPath = (path: string): boolean => path.toLowerCase().endsWith(".md");
 
+const IMAGE_EXTENSIONS: Record<string, string> = {
+  "image/png": "png",
+  "image/jpeg": "jpg",
+  "image/gif": "gif",
+  "image/webp": "webp",
+};
+
+async function fileToBase64(file: File): Promise<string> {
+  const buffer = new Uint8Array(await file.arrayBuffer());
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let offset = 0; offset < buffer.length; offset += chunkSize) {
+    binary += String.fromCharCode(...buffer.subarray(offset, offset + chunkSize));
+  }
+  return window.btoa(binary);
+}
+
+async function insertImages(root: string, files: File[], view: EditorView): Promise<void> {
+  const stamp = Date.now();
+  const snippets: string[] = [];
+  let index = 0;
+  for (const file of files) {
+    const extension = IMAGE_EXTENSIONS[file.type];
+    if (!extension) {
+      continue;
+    }
+    const relPath = `assets/${stamp}${index > 0 ? `-${index}` : ""}.${extension}`;
+    const data = await fileToBase64(file);
+    await api.writeBinary(root, relPath, data);
+    snippets.push(`![${file.name || "image"}](${relPath})`);
+    index += 1;
+  }
+  if (snippets.length === 0) {
+    return;
+  }
+  const text = snippets.join("\n");
+  const range = view.state.selection.main;
+  view.dispatch({
+    changes: { from: range.from, to: range.to, insert: text },
+    selection: { anchor: range.from + text.length },
+  });
+  view.focus();
+}
+
 export interface CursorInfo {
   line: number;
   column: number;
@@ -70,6 +115,7 @@ export function createEditor(
   const language = new Compartment();
   const font = new Compartment();
   const wrap = new Compartment();
+  const spellcheck = new Compartment();
   let applyingExternal = false;
   let saveTimer: number | undefined;
   let currentPath: string | null = null;
@@ -91,6 +137,33 @@ export function createEditor(
     font.of(fontSizeTheme(config.getState().config.editor.fontSize)),
     wrap.of(config.getState().config.editor.wordWrap ? EditorView.lineWrapping : []),
     language.of([]),
+    spellcheck.of(
+      EditorView.contentAttributes.of({
+        spellcheck: config.getState().config.editor.spellCheck ? "true" : "false",
+      }),
+    ),
+    EditorView.domEventHandlers({
+      paste: (event, view) => {
+        const files = event.clipboardData?.files ? [...event.clipboardData.files] : [];
+        const root = store.getState().root;
+        if (files.length === 0 || !root) {
+          return false;
+        }
+        event.preventDefault();
+        void insertImages(root, files, view);
+        return true;
+      },
+      drop: (event, view) => {
+        const files = event.dataTransfer?.files ? [...event.dataTransfer.files] : [];
+        const root = store.getState().root;
+        if (files.length === 0 || !root) {
+          return false;
+        }
+        event.preventDefault();
+        void insertImages(root, files, view);
+        return true;
+      },
+    }),
     EditorView.updateListener.of((update) => {
       if (update.docChanged && !applyingExternal) {
         store.setContents(update.state.doc.toString());
@@ -167,6 +240,11 @@ export function createEditor(
       effects: [
         font.reconfigure(fontSizeTheme(value.editor.fontSize)),
         wrap.reconfigure(value.editor.wordWrap ? EditorView.lineWrapping : []),
+        spellcheck.reconfigure(
+          EditorView.contentAttributes.of({
+            spellcheck: value.editor.spellCheck ? "true" : "false",
+          }),
+        ),
       ],
     });
   };

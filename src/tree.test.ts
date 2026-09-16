@@ -13,6 +13,8 @@ const node = (relPath: string, isDir: boolean, children: TreeNode[] = []): TreeN
   dangling: false,
   order: null,
   placements: [relPath],
+  color: null,
+  icon: null,
 });
 
 describe("visibleNodes", () => {

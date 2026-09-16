@@ -12,3 +12,21 @@ export function baseName(relPath: string): string {
 export function cleanTarget(value: string): string {
   return value.trim().replace(/^\/+|\/+$/g, "");
 }
+
+export function resolveRelative(baseDir: string | null, relative: string): string | null {
+  const stack = baseDir === null || baseDir === "" ? [] : baseDir.split("/");
+  for (const part of relative.split("/")) {
+    if (part === "" || part === ".") {
+      continue;
+    }
+    if (part === "..") {
+      if (stack.length === 0) {
+        return null;
+      }
+      stack.pop();
+    } else {
+      stack.push(part);
+    }
+  }
+  return stack.join("/");
+}

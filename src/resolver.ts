@@ -12,6 +12,8 @@ export interface TreeNode {
   dangling: boolean;
   order: number | null;
   placements: string[];
+  color: string | null;
+  icon: string | null;
 }
 
 export interface ResolveResult {
@@ -96,6 +98,8 @@ export function resolveVault(entries: FileMeta[]): ResolveResult {
       dangling: danglingFiles.has(entry.relPath),
       order: entry.frontmatter.order,
       placements: [],
+      color: entry.frontmatter.color,
+      icon: entry.frontmatter.icon,
     });
   }
 
@@ -110,6 +114,8 @@ export function resolveVault(entries: FileMeta[]): ResolveResult {
     dangling: true,
     order: null,
     placements: [],
+    color: null,
+    icon: null,
   };
   let danglingUsed = false;
 
@@ -161,6 +167,8 @@ export function resolveVault(entries: FileMeta[]): ResolveResult {
         dangling: target === null,
         order: entry.frontmatter.order,
         placements: [],
+        color: entry.frontmatter.color,
+        icon: entry.frontmatter.icon,
       };
       if (target === null) {
         danglingUsed = true;

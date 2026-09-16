@@ -7,6 +7,7 @@ export const ConfigSchema = z.object({
     fontSize: z.number().int().min(8).max(32),
     wordWrap: z.boolean(),
     autosaveDelayMs: z.number().int().min(0).max(10000),
+    spellCheck: z.boolean(),
   }),
   preview: z.object({
     position: z.enum(["hidden", "right", "left", "bottom", "top"]),
@@ -35,7 +36,7 @@ export const ConfigSchema = z.object({
 export type AppConfig = z.infer<typeof ConfigSchema>;
 
 export const DEFAULT_CONFIG: AppConfig = {
-  editor: { fontSize: 14, wordWrap: false, autosaveDelayMs: 500 },
+  editor: { fontSize: 14, wordWrap: false, autosaveDelayMs: 500, spellCheck: true },
   preview: { position: "right", syncScroll: true },
   theme: {
     name: "default-light",
@@ -57,6 +58,7 @@ export const STARTER_CONFIG = `# Graft configuration
 fontSize = 14
 wordWrap = false
 autosaveDelayMs = 500
+spellCheck = true
 
 [preview]
 # hidden | right | left | bottom | top

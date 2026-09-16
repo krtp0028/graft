@@ -1,5 +1,6 @@
 import * as api from "./api";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open } from "@tauri-apps/plugin-dialog";
 import { commands } from "./commands";
 import { config } from "./config";
@@ -12,17 +13,20 @@ import { isPreviewPosition, nextPreviewPosition } from "./layout";
 import type { PreviewPosition } from "./layout";
 import { LuaController } from "./lua";
 import { insertLink, prefixLines, toggleHeading, wrapSelection } from "./markdown";
+import { installMenu } from "./menu";
 import { CommandPalette, fuzzyMatch } from "./palette";
 import { baseName, parentDir } from "./paths";
 import { createPreview } from "./preview";
 import { promptText } from "./prompt";
 import { QuickOpen } from "./quickopen";
+import { RecentVaultsPanel, rememberVault } from "./recent";
 import { rewriteReferences } from "./refs";
 import { effectiveTags, resolveVault } from "./resolver";
 import type { TreeNode } from "./resolver";
 import { SearchUi } from "./searchui";
 import { computeRollups } from "./rollup";
 import { VaultStore } from "./store";
+import { TasksPanel } from "./tasks";
 import { upsertFrontmatter } from "./frontmatter";
 import { ThemeController } from "./theme";
 import { TreeView } from "./tree";
@@ -54,6 +58,7 @@ export function mountShell(root: HTMLElement): void {
   const undoButton = iconButton("undo", "Undo last file operation");
   const searchButton = iconButton("search", "Search vault (Ctrl+Shift+F)");
   const quickOpenButton = iconButton("go-to", "Quick open (Ctrl+P)");
+  const tasksButton = iconButton("check", "Open tasks");
   const previewButton = iconButton("preview", "Cycle preview position (Ctrl+Shift+V)");
   const configButton = iconButton("settings", "Config health");
 
@@ -79,6 +84,7 @@ export function mountShell(root: HTMLElement): void {
     divider(),
     searchButton,
     quickOpenButton,
+    tasksButton,
     divider(),
     previewButton,
     configButton,
@@ -102,7 +108,17 @@ export function mountShell(root: HTMLElement): void {
   treeSearch.className = "tree-search";
   treeSearch.placeholder = "Filter nodes...";
   const treeContainer = el("div", "tree-container");
-  sidebar.append(treeSearch, treeContainer);
+  const tagPanel = el("div", "tag-panel");
+  const tagHeader = document.createElement("button");
+  tagHeader.className = "tag-header";
+  tagHeader.textContent = "Tags";
+  const tagList = el("div", "tag-list");
+  tagPanel.append(tagHeader, tagList);
+  tagPanel.hidden = true;
+  tagHeader.addEventListener("click", () => {
+    tagList.hidden = !tagList.hidden;
+  });
+  sidebar.append(treeSearch, treeContainer, tagPanel);
 
   const docArea = el("div", "doc-area");
   const editorPane = el("main", "editor-pane");
@@ -186,7 +202,7 @@ export function mountShell(root: HTMLElement): void {
       void store.openFile(relPath);
     },
     onMove: (request) => {
-      void applyMove(request.openPath, request.targetDir, request.mirror);
+      void applyMove(request.openPaths, request.target, request.position, request.mirror);
     },
     onReorder: (openPath, direction) => {
       void applyReorder(openPath, direction);
@@ -196,35 +212,103 @@ export function mountShell(root: HTMLElement): void {
     },
   });
 
-  const applyMove = async (
+  const moveInto = async (
+    root: string,
     openPath: string,
-    targetDir: string | null,
+    target: string,
     mirror: boolean,
   ): Promise<void> => {
-    const { root, entries } = store.getState();
-    if (!root) {
-      return;
-    }
+    const { entries } = store.getState();
     const entry = entries.find((candidate) => candidate.relPath === openPath);
     if (!entry) {
       return;
     }
+    const targetIsDir = entries.some(
+      (candidate) => candidate.relPath === target && candidate.isDir,
+    );
     const contents = await api.readFile(root, openPath);
-    let next: string;
     if (mirror) {
-      if (!targetDir || entry.frontmatter.alsoUnder.includes(targetDir)) {
+      if (entry.frontmatter.alsoUnder.includes(target)) {
         return;
       }
-      next = upsertFrontmatter(contents, {
-        also_under: [...entry.frontmatter.alsoUnder, targetDir],
-      });
-    } else {
-      const physicalParent = parentDir(openPath);
-      const value = targetDir === physicalParent ? null : targetDir;
-      next = upsertFrontmatter(contents, { parent: value });
+      await api.writeFile(
+        root,
+        openPath,
+        upsertFrontmatter(contents, { also_under: [...entry.frontmatter.alsoUnder, target] }),
+      );
+      return;
     }
-    await api.writeFile(root, openPath, next);
+    const physicalParent = parentDir(openPath);
+    let value: string | null;
+    if (targetIsDir) {
+      value = target === physicalParent ? null : target;
+    } else {
+      value = target.replace(/\.md$/i, "");
+    }
+    await api.writeFile(root, openPath, upsertFrontmatter(contents, { parent: value }));
+  };
+
+  const applyMove = async (
+    openPaths: string[],
+    target: string,
+    position: "into" | "before" | "after",
+    mirror: boolean,
+  ): Promise<void> => {
+    const { root, entries } = store.getState();
+    if (!root || openPaths.length === 0) {
+      return;
+    }
+
+    if (position === "into") {
+      for (const openPath of openPaths) {
+        await moveInto(root, openPath, target, mirror);
+      }
+      await store.refresh();
+      return;
+    }
+
+    const dir = parentDir(target);
+    const siblings = entries
+      .filter((entry) => !entry.isDir && parentDir(entry.relPath) === dir)
+      .sort((a, b) => {
+        const orderA = a.frontmatter.order ?? Number.POSITIVE_INFINITY;
+        const orderB = b.frontmatter.order ?? Number.POSITIVE_INFINITY;
+        if (orderA !== orderB) {
+          return orderA - orderB;
+        }
+        return a.relPath.localeCompare(b.relPath);
+      })
+      .map((entry) => entry.relPath)
+      .filter((path) => !openPaths.includes(path));
+    const index = siblings.indexOf(target);
+    if (index === -1) {
+      for (const openPath of openPaths) {
+        await moveInto(root, openPath, dir ?? "", mirror);
+      }
+      await store.refresh();
+      return;
+    }
+    const ordered = [...siblings];
+    ordered.splice(position === "before" ? index : index + 1, 0, ...openPaths);
+    await assignOrders(ordered);
     await store.refresh();
+  };
+
+  const assignOrders = async (orderedPaths: string[]): Promise<void> => {
+    const { root, entries } = store.getState();
+    if (!root) {
+      return;
+    }
+    const byPath = new Map(entries.map((entry) => [entry.relPath, entry]));
+    for (const [index, path] of orderedPaths.entries()) {
+      const desired = (index + 1) * 10;
+      const entry = byPath.get(path);
+      if (entry && entry.frontmatter.order === desired) {
+        continue;
+      }
+      const contents = await api.readFile(root, path);
+      await api.writeFile(root, path, upsertFrontmatter(contents, { order: desired }));
+    }
   };
 
   const applyReorder = async (openPath: string, direction: -1 | 1): Promise<void> => {
@@ -261,7 +345,7 @@ export function mountShell(root: HTMLElement): void {
   };
 
   const undo = new UndoStack();
-  let clipboard: { path: string; mode: "copy" | "cut" } | null = null;
+  let clipboard: { paths: string[]; mode: "copy" | "cut" } | null = null;
   let currentByPath = new Map<string, api.FileMeta>();
   let currentParentOf = new Map<string, string | null>();
   let filterActive = false;
@@ -288,6 +372,45 @@ export function mountShell(root: HTMLElement): void {
     }
   };
 
+  const renderTagPanel = (): void => {
+    const counts = new Map<string, number>();
+    for (const entry of store.getState().entries) {
+      if (entry.isDir) {
+        continue;
+      }
+      for (const tag of effectiveTags(entry.relPath, currentByPath, currentParentOf).tags) {
+        counts.set(tag, (counts.get(tag) ?? 0) + 1);
+      }
+    }
+    const sorted = [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+    tagPanel.hidden = sorted.length === 0;
+    tagList.replaceChildren(
+      ...sorted.map(([tag, count]) => {
+        const row = document.createElement("button");
+        row.className = "tag-row";
+        const label = document.createElement("span");
+        label.textContent = `#${tag}`;
+        const badge = document.createElement("span");
+        badge.className = "tag-count";
+        badge.textContent = String(count);
+        row.append(label, badge);
+        row.addEventListener("click", () => {
+          const matching = new Set<string>();
+          for (const entry of store.getState().entries) {
+            if (entry.isDir) {
+              continue;
+            }
+            if (effectiveTags(entry.relPath, currentByPath, currentParentOf).tags.includes(tag)) {
+              matching.add(entry.relPath);
+            }
+          }
+          setFilter(`#${tag}`, (node) => node.openPath !== "" && matching.has(node.openPath));
+        });
+        return row;
+      }),
+    );
+  };
+
   const refreshTreeData = (entries: api.FileMeta[]): void => {
     const resolved = resolveVault(entries);
     currentByPath = new Map(entries.map((entry) => [entry.relPath, entry]));
@@ -299,6 +422,7 @@ export function mountShell(root: HTMLElement): void {
       rollupConfig,
     );
     updateTagChips();
+    renderTagPanel();
   };
 
   const setFilter = (label: string, match: ((node: TreeNode) => boolean) | null): void => {
@@ -367,23 +491,6 @@ export function mountShell(root: HTMLElement): void {
       counter += 1;
     }
     return candidate;
-  };
-
-  const assignOrders = async (orderedPaths: string[]): Promise<void> => {
-    const { root, entries } = store.getState();
-    if (!root) {
-      return;
-    }
-    const byPath = new Map(entries.map((entry) => [entry.relPath, entry]));
-    for (const [index, path] of orderedPaths.entries()) {
-      const desired = (index + 1) * 10;
-      const entry = byPath.get(path);
-      if (entry && entry.frontmatter.order === desired) {
-        continue;
-      }
-      const contents = await api.readFile(root, path);
-      await api.writeFile(root, path, upsertFrontmatter(contents, { order: desired }));
-    }
   };
 
   const addNode = async (mode: "sibling" | "child"): Promise<void> => {
@@ -576,20 +683,34 @@ export function mountShell(root: HTMLElement): void {
     title: "Move to trash",
     run: async () => {
       const { root } = store.getState();
-      const target = selectedTarget();
-      if (!root || !target) {
+      const targets = tree.getSelection();
+      if (!root || targets.length === 0) {
         return;
       }
-      const trashId = await api.trashPath(root, target);
+      const trashIds: Array<[string, string]> = [];
+      const removed: string[] = [];
+      for (const target of [...targets].sort((a, b) => b.length - a.length)) {
+        if (removed.some((parent) => target.startsWith(`${parent}/`))) {
+          continue;
+        }
+        const trashId = await api.trashPath(root, target);
+        trashIds.push([trashId, target]);
+        removed.push(target);
+      }
       undo.push({
-        label: `delete ${target}`,
+        label: `delete ${removed.length} node(s)`,
         run: async () => {
-          await api.restoreTrash(root, trashId);
+          for (const [trashId] of [...trashIds].reverse()) {
+            await api.restoreTrash(root, trashId);
+          }
           await store.refresh();
         },
       });
       const active = store.getState().activePath;
-      if (active === target || (active !== null && active.startsWith(`${target}/`))) {
+      if (
+        active !== null &&
+        removed.some((target) => active === target || active.startsWith(`${target}/`))
+      ) {
         store.clearActive();
       }
       await store.refresh();
@@ -600,9 +721,9 @@ export function mountShell(root: HTMLElement): void {
     id: "tree.copy",
     title: "Copy",
     run: () => {
-      const target = selectedTarget();
-      if (target) {
-        clipboard = { path: target, mode: "copy" };
+      const targets = tree.getSelection();
+      if (targets.length > 0) {
+        clipboard = { paths: targets, mode: "copy" };
       }
     },
   });
@@ -611,9 +732,9 @@ export function mountShell(root: HTMLElement): void {
     id: "tree.cut",
     title: "Cut",
     run: () => {
-      const target = selectedTarget();
-      if (target) {
-        clipboard = { path: target, mode: "cut" };
+      const targets = tree.getSelection();
+      if (targets.length > 0) {
+        clipboard = { paths: targets, mode: "cut" };
       }
     },
   });
@@ -627,31 +748,36 @@ export function mountShell(root: HTMLElement): void {
       if (!root || !source) {
         return;
       }
-      const to = joinPath(selectedDir(), baseName(source.path));
-      if (to === source.path) {
-        return;
+      const dir = selectedDir();
+      const entries = store.getState().entries;
+      for (const path of source.paths) {
+        const to = joinPath(dir, baseName(path));
+        if (to === path) {
+          continue;
+        }
+        if (source.mode === "copy") {
+          await api.duplicatePath(root, path, to);
+          undo.push({
+            label: `paste ${to}`,
+            run: async () => {
+              await api.trashPath(root, to);
+              await store.refresh();
+            },
+          });
+        } else {
+          await api.renamePath(root, path, to);
+          await rewriteReferences(root, entries, path, to);
+          undo.push({
+            label: `move ${path}`,
+            run: async () => {
+              await api.renamePath(root, to, path);
+              await rewriteReferences(root, store.getState().entries, to, path);
+              await store.refresh();
+            },
+          });
+        }
       }
-      if (source.mode === "copy") {
-        await api.duplicatePath(root, source.path, to);
-        undo.push({
-          label: `paste ${to}`,
-          run: async () => {
-            await api.trashPath(root, to);
-            await store.refresh();
-          },
-        });
-      } else {
-        const entries = store.getState().entries;
-        await api.renamePath(root, source.path, to);
-        await rewriteReferences(root, entries, source.path, to);
-        undo.push({
-          label: `move ${source.path}`,
-          run: async () => {
-            await api.renamePath(root, to, source.path);
-            await rewriteReferences(root, store.getState().entries, to, source.path);
-            await store.refresh();
-          },
-        });
+      if (source.mode === "cut") {
         clipboard = null;
       }
       await store.refresh();
@@ -664,6 +790,109 @@ export function mountShell(root: HTMLElement): void {
     run: async () => {
       await undo.undoLast();
     },
+  });
+
+  commands.register({
+    id: "file.reveal",
+    title: "Reveal in file manager",
+    run: async () => {
+      const { root } = store.getState();
+      const target = tree.getSelected()?.openPath;
+      if (!root || !target) {
+        return;
+      }
+      const separator = root.includes("\\") ? "\\" : "/";
+      const absolute = `${root.replace(/[\\/]+$/, "")}${separator}${target.split("/").join(separator)}`;
+      await api.revealPath(absolute);
+    },
+  });
+
+  commands.register({
+    id: "node.set_color",
+    title: "Set node color",
+    run: async () => {
+      const { root } = store.getState();
+      const target = tree.getSelected()?.openPath;
+      if (!root || !target) {
+        return;
+      }
+      const value = await promptText(app, {
+        title: "Node color (hex, empty to clear)",
+        initial: currentByPath.get(target)?.frontmatter.color ?? "#c0392b",
+        confirmLabel: "Apply",
+      });
+      if (value === null) {
+        return;
+      }
+      const contents = await api.readFile(root, target);
+      await api.writeFile(
+        root,
+        target,
+        upsertFrontmatter(contents, { color: value === "" ? null : value }),
+      );
+      await store.refresh();
+    },
+  });
+
+  commands.register({
+    id: "node.set_icon",
+    title: "Set node icon",
+    run: async () => {
+      const { root } = store.getState();
+      const target = tree.getSelected()?.openPath;
+      if (!root || !target) {
+        return;
+      }
+      const value = await promptText(app, {
+        title: "Node icon (single symbol, empty to clear)",
+        initial: currentByPath.get(target)?.frontmatter.icon ?? "",
+        confirmLabel: "Apply",
+      });
+      if (value === null) {
+        return;
+      }
+      const contents = await api.readFile(root, target);
+      await api.writeFile(
+        root,
+        target,
+        upsertFrontmatter(contents, { icon: value === "" ? null : value }),
+      );
+      await store.refresh();
+    },
+  });
+
+  commands.register({
+    id: "tree.sort_children",
+    title: "Sort children by name",
+    run: async () => {
+      const { root, entries } = store.getState();
+      const selected = tree.getSelected();
+      if (!root || !selected) {
+        return;
+      }
+      const dir =
+        selected.isDir && selected.openPath === ""
+          ? selected.relPath
+          : parentDir(selected.openPath);
+      const children = entries
+        .filter((entry) => !entry.isDir && parentDir(entry.relPath) === dir)
+        .map((entry) => entry.relPath)
+        .sort((a, b) => baseName(a).localeCompare(baseName(b)));
+      await assignOrders(children);
+      await store.refresh();
+    },
+  });
+
+  commands.register({
+    id: "tree.expand_all",
+    title: "Expand all nodes",
+    run: () => tree.expandAll(),
+  });
+
+  commands.register({
+    id: "tree.collapse_all",
+    title: "Collapse all nodes",
+    run: () => tree.collapseAll(),
   });
 
   commands.register({
@@ -1074,6 +1303,32 @@ export function mountShell(root: HTMLElement): void {
   });
   fillFormatBar();
 
+  const tasksPanel = new TasksPanel(app, {
+    getContext: () => {
+      const { root, entries } = store.getState();
+      return root ? { root, entries } : null;
+    },
+    onOpen: (relPath, line) => {
+      void store.openFileAt(relPath, line);
+    },
+  });
+  commands.register({
+    id: "tasks.open",
+    title: "Open tasks",
+    run: () => tasksPanel.open(),
+  });
+
+  const recentPanel = new RecentVaultsPanel(app, (root) => {
+    void store.openVault(root);
+  });
+  commands.register({
+    id: "vault.open_recent",
+    title: "Open recent vault",
+    run: () => recentPanel.open(),
+  });
+
+  void installMenu(runCommand, showNotice);
+
   openButton.addEventListener("click", () => runCommand("vault.open"));
   addNodeButton.addEventListener("click", () => runCommand("tree.add_node"));
   addChildButton.addEventListener("click", () => runCommand("tree.add_child_node"));
@@ -1082,6 +1337,7 @@ export function mountShell(root: HTMLElement): void {
   undoButton.addEventListener("click", () => runCommand("edit.undo"));
   searchButton.addEventListener("click", () => runCommand("search.open"));
   quickOpenButton.addEventListener("click", () => runCommand("file.quick_open"));
+  tasksButton.addEventListener("click", () => runCommand("tasks.open"));
   previewButton.addEventListener("click", () => runCommand("preview.cycle_position"));
   configButton.addEventListener("click", () => runCommand("config.health"));
 
@@ -1292,6 +1548,7 @@ export function mountShell(root: HTMLElement): void {
   let lastEntries: unknown;
   let lastActivePath: string | null | undefined;
   let lastDirty: boolean | undefined;
+  let lastTitle = "";
   store.subscribe((state) => {
     statusVault.textContent = state.root ?? "no vault open";
     statusFile.textContent = state.activePath ?? "";
@@ -1313,12 +1570,14 @@ export function mountShell(root: HTMLElement): void {
       lastRoot = state.root;
       void config.setVault(state.root);
       if (state.root) {
+        rememberVault(state.root);
         void api.watchVault(state.root).catch(() => undefined);
       }
     }
     if (state.entries !== lastEntries) {
       lastEntries = state.entries;
       refreshTreeData(state.entries);
+      tasksPanel.refresh();
       void lua.hook("tree_change", String(state.entries.length));
     }
     if (state.activePath !== lastActivePath) {
@@ -1331,6 +1590,16 @@ export function mountShell(root: HTMLElement): void {
     }
     renderTabBar();
     scheduleSessionSave();
+
+    const title = `${state.activePath ? `${baseName(state.activePath)} — ` : ""}${
+      state.root ? baseName(state.root) : "Graft"
+    }`;
+    if (title !== lastTitle) {
+      lastTitle = title;
+      void getCurrentWindow()
+        .setTitle(title)
+        .catch(() => undefined);
+    }
 
     const activeEntry = state.activePath ? currentByPath.get(state.activePath) : undefined;
     statusWords.textContent = activeEntry ? `${activeEntry.metrics.words} words` : "";

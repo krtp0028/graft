@@ -1,4 +1,5 @@
 import DOMPurify from "dompurify";
+import { convertFileSrc } from "@tauri-apps/api/core";
 import hljs from "highlight.js/lib/core";
 import bash from "highlight.js/lib/languages/bash";
 import css from "highlight.js/lib/languages/css";
@@ -11,7 +12,7 @@ import typescript from "highlight.js/lib/languages/typescript";
 import xml from "highlight.js/lib/languages/xml";
 import MarkdownIt from "markdown-it";
 import type { FileMeta } from "./api";
-import { baseName } from "./paths";
+import { baseName, parentDir, resolveRelative } from "./paths";
 import type { VaultStore } from "./store";
 
 hljs.registerLanguage("bash", bash);
@@ -83,6 +84,7 @@ function render(
     linkifyWikiLinks(container, entries, (target) => {
       void store.openFileAt(target, 1);
     });
+    linkifyImages(container, activePath, store);
     renderBacklinks(container, store, activePath, entries);
     return;
   }
@@ -106,6 +108,29 @@ function decorateTaskLists(container: HTMLElement): void {
     checkbox.disabled = true;
     checkbox.checked = match[1].toLowerCase() === "x";
     item.prepend(checkbox, document.createTextNode(" "));
+  }
+}
+
+function linkifyImages(container: HTMLElement, activePath: string, store: VaultStore): void {
+  const root = store.getState().root;
+  if (!root) {
+    return;
+  }
+  const baseDir = parentDir(activePath);
+  for (const image of container.querySelectorAll("img")) {
+    const source = image.getAttribute("src") ?? "";
+    if (source === "" || /^(https?:|data:|blob:|asset:)/i.test(source)) {
+      continue;
+    }
+    const resolved = resolveRelative(baseDir, decodeURIComponent(source));
+    if (!resolved) {
+      continue;
+    }
+    image.src = convertFileSrc(`${root.replace(/[\\/]+$/, "")}/${resolved}`);
+    image.loading = "lazy";
+    if (image.alt === "") {
+      image.alt = resolved.split("/").pop() ?? "image";
+    }
   }
 }
 

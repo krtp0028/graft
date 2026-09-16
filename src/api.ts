@@ -5,7 +5,14 @@ export interface Frontmatter {
   alsoUnder: string[];
   order: number | null;
   tags: string[];
+  color: string | null;
+  icon: string | null;
   numbers: Record<string, number>;
+}
+
+export interface TaskItem {
+  line: number;
+  text: string;
 }
 
 export interface FileMetrics {
@@ -13,6 +20,7 @@ export interface FileMetrics {
   tasksDone: number;
   words: number;
   links: string[];
+  tasks: TaskItem[];
 }
 
 export interface FileMeta {
@@ -34,6 +42,18 @@ export function readFile(root: string, relPath: string): Promise<string> {
 
 export function writeFile(root: string, relPath: string, contents: string): Promise<void> {
   return invoke("vault_write_file", { root, relPath, contents });
+}
+
+export function writeBinary(root: string, relPath: string, data: string): Promise<void> {
+  return invoke("vault_write_binary", { root, relPath, data });
+}
+
+export function importExternal(root: string, source: string, relPath: string): Promise<void> {
+  return invoke("vault_import_external", { root, source, relPath });
+}
+
+export function revealPath(path: string): Promise<void> {
+  return invoke("reveal_path", { path });
 }
 
 export function createDir(root: string, relPath: string): Promise<void> {

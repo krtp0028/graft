@@ -35,8 +35,9 @@ export function filterTree(nodes: TreeNode[], match: (node: TreeNode) => boolean
 }
 
 export interface TreeMoveRequest {
-  openPath: string;
-  targetDir: string | null;
+  openPaths: string[];
+  target: string;
+  position: "into" | "before" | "after";
   mirror: boolean;
 }
 
@@ -53,9 +54,9 @@ export class TreeView {
   private readonly options: TreeViewOptions;
   private roots: TreeNode[] = [];
   private readonly expanded = new Set<string>();
-  private activePath: string | null = null;
-  private selectedPath: string | null = null;
-  private dragPath: string | null = null;
+  private selection = new Set<string>();
+  private primaryPath: string | null = null;
+  private dragPaths: string[] = [];
   private rollups: Map<string, RollupAggregate> | null = null;
   private rollupConfig: RollupConfig | null = null;
   private filter: ((node: TreeNode) => boolean) | null = null;
@@ -70,10 +71,20 @@ export class TreeView {
       event.preventDefault();
     });
     this.container.addEventListener("drop", (event) => {
-      const path = event.dataTransfer?.getData("application/x-graft-path");
-      if (path && this.options.onMove) {
+      const raw = event.dataTransfer?.getData("application/x-graft-paths");
+      if (raw && this.options.onMove && event.target === this.container) {
         event.preventDefault();
-        this.options.onMove({ openPath: path, targetDir: null, mirror: event.altKey });
+        try {
+          const paths = JSON.parse(raw) as string[];
+          this.options.onMove({
+            openPaths: paths,
+            target: "",
+            position: "into",
+            mirror: event.altKey,
+          });
+        } catch {
+          // ignore malformed drag payloads
+        }
       }
     });
   }
@@ -98,13 +109,59 @@ export class TreeView {
   }
 
   setActive(relPath: string | null): void {
-    this.activePath = relPath;
-    this.selectedPath = relPath;
+    this.primaryPath = relPath;
+    this.selection = relPath === null ? new Set() : new Set([relPath]);
     this.render();
   }
 
   getSelected(): TreeNode | null {
-    return this.findSelected();
+    if (this.primaryPath === null) {
+      return null;
+    }
+    return (
+      visibleNodes(this.roots, this.expanded).find((node) => node.relPath === this.primaryPath) ??
+      visibleNodes(this.roots, this.expanded).find((node) => node.openPath === this.primaryPath) ??
+      null
+    );
+  }
+
+  getSelection(): string[] {
+    const paths: string[] = [];
+    const collect = (nodes: TreeNode[]): void => {
+      for (const node of nodes) {
+        if (
+          this.selection.has(node.relPath) &&
+          node.openPath !== "" &&
+          !paths.includes(node.openPath)
+        ) {
+          paths.push(node.openPath);
+        }
+        collect(node.children);
+      }
+    };
+    collect(this.roots);
+    if (paths.length === 0 && this.primaryPath !== null) {
+      paths.push(this.primaryPath);
+    }
+    return paths;
+  }
+
+  expandAll(): void {
+    const visit = (nodes: TreeNode[]): void => {
+      for (const node of nodes) {
+        if (node.isDir || node.children.length > 0) {
+          this.expanded.add(node.relPath);
+        }
+        visit(node.children);
+      }
+    };
+    visit(this.roots);
+    this.render();
+  }
+
+  collapseAll(): void {
+    this.expanded.clear();
+    this.render();
   }
 
   setRollups(rollups: Map<string, RollupAggregate>, config: RollupConfig): void {
@@ -137,10 +194,10 @@ export class TreeView {
       if (node.mirror) {
         item.classList.add("mirror");
       }
-      if (node.relPath === this.selectedPath) {
+      if (this.selection.has(node.relPath)) {
         item.classList.add("selected");
       }
-      if (node.openPath === this.activePath && !node.mirror) {
+      if (node.openPath === this.primaryPath && !node.mirror) {
         item.classList.add("active");
       }
       item.style.paddingLeft = `${8 + this.depth(node.relPath) * 14}px`;
@@ -164,7 +221,18 @@ export class TreeView {
 
       const nodeIcon = document.createElement("span");
       nodeIcon.className = "node-icon";
-      nodeIcon.append(icon(node.isDir || node.relPath === "__dangling__" ? "folder" : "file", 13));
+      if (node.icon) {
+        nodeIcon.textContent = node.icon;
+        nodeIcon.classList.add("emoji");
+      } else {
+        nodeIcon.append(
+          icon(node.isDir || node.relPath === "__dangling__" ? "folder" : "file", 13),
+        );
+      }
+      if (node.color) {
+        label.style.setProperty("--node-color", node.color);
+        nodeIcon.style.setProperty("--node-color", node.color);
+      }
 
       item.append(nodeIcon, twisty, label);
 
@@ -209,14 +277,17 @@ export class TreeView {
       if (node.openPath !== "") {
         item.draggable = true;
         item.addEventListener("dragstart", (event) => {
-          this.dragPath = node.openPath;
-          event.dataTransfer?.setData("application/x-graft-path", node.openPath);
+          this.dragPaths =
+            this.selection.has(node.relPath) && this.getSelection().length > 0
+              ? this.getSelection()
+              : [node.openPath];
+          event.dataTransfer?.setData("application/x-graft-paths", JSON.stringify(this.dragPaths));
           if (event.dataTransfer) {
             event.dataTransfer.effectAllowed = "move";
           }
         });
         item.addEventListener("dragend", () => {
-          this.dragPath = null;
+          this.dragPaths = [];
         });
       }
 
@@ -224,33 +295,88 @@ export class TreeView {
       const isFileNode = !node.isDir && node.openPath !== "" && !node.mirror;
       if (isRealDir || isFileNode) {
         const dropTarget = isRealDir ? node.relPath : node.openPath;
+
+        const clearDropClasses = (): void => {
+          item.classList.remove("drop-into", "drop-before", "drop-after");
+        };
+
         item.addEventListener("dragover", (event) => {
-          const path = this.dragPath;
-          if (path && path !== dropTarget && !dropTarget.startsWith(`${path}/`)) {
-            event.preventDefault();
-            item.classList.add("drop-target");
+          if (this.dragPaths.length === 0 || this.dragPaths.includes(dropTarget)) {
+            return;
+          }
+          if (this.dragPaths.some((path) => dropTarget.startsWith(`${path}/`))) {
+            return;
+          }
+          event.preventDefault();
+          const rect = item.getBoundingClientRect();
+          const ratio = (event.clientY - rect.top) / rect.height;
+          clearDropClasses();
+          if (ratio < 0.25) {
+            item.classList.add("drop-before");
+          } else if (ratio > 0.75) {
+            item.classList.add("drop-after");
+          } else {
+            item.classList.add("drop-into");
           }
         });
-        item.addEventListener("dragleave", () => {
-          item.classList.remove("drop-target");
-        });
+        item.addEventListener("dragleave", clearDropClasses);
         item.addEventListener("drop", (event) => {
-          item.classList.remove("drop-target");
-          const path = event.dataTransfer?.getData("application/x-graft-path");
-          if (path && this.options.onMove) {
+          const position = item.classList.contains("drop-before")
+            ? "before"
+            : item.classList.contains("drop-after")
+              ? "after"
+              : "into";
+          clearDropClasses();
+          const raw = event.dataTransfer?.getData("application/x-graft-paths");
+          if (raw && this.options.onMove) {
             event.preventDefault();
             event.stopPropagation();
-            this.options.onMove({ openPath: path, targetDir: dropTarget, mirror: event.altKey });
+            try {
+              const paths = JSON.parse(raw) as string[];
+              this.options.onMove({
+                openPaths: paths,
+                target: dropTarget,
+                position,
+                mirror: event.altKey,
+              });
+            } catch {
+              // ignore malformed drag payloads
+            }
           }
         });
       }
 
-      item.addEventListener("click", () => {
+      item.addEventListener("click", (event) => {
         this.container.focus();
+        const visible = visibleNodes(this.roots, this.expanded);
+        if (event.shiftKey && this.primaryPath !== null) {
+          const from = visible.findIndex((candidate) => candidate.relPath === this.primaryPath);
+          const to = visible.findIndex((candidate) => candidate.relPath === node.relPath);
+          if (from !== -1 && to !== -1) {
+            this.selection = new Set(
+              visible
+                .slice(Math.min(from, to), Math.max(from, to) + 1)
+                .map((entry) => entry.relPath),
+            );
+          }
+          this.render();
+          return;
+        }
+        if (event.ctrlKey || event.metaKey) {
+          if (this.selection.has(node.relPath)) {
+            this.selection.delete(node.relPath);
+          } else {
+            this.selection.add(node.relPath);
+          }
+          this.primaryPath = node.relPath;
+          this.render();
+          return;
+        }
+        this.selection = new Set([node.relPath]);
+        this.primaryPath = node.relPath;
         if (node.isDir) {
           this.toggleExpanded(node.relPath);
         } else if (node.openPath !== "") {
-          this.selectedPath = node.relPath;
           this.options.onOpenFile(node.openPath);
           this.render();
         }
@@ -281,7 +407,7 @@ export class TreeView {
 
   private handleKeydown(event: KeyboardEvent): void {
     if (event.altKey && (event.key === "ArrowUp" || event.key === "ArrowDown")) {
-      const node = this.findSelected();
+      const node = this.getSelected();
       if (node && this.options.onReorder) {
         event.preventDefault();
         this.options.onReorder(node.openPath, event.key === "ArrowUp" ? -1 : 1);
@@ -293,8 +419,8 @@ export class TreeView {
     if (visible.length === 0) {
       return;
     }
-    const currentIndex = this.selectedPath
-      ? visible.findIndex((node) => node.relPath === this.selectedPath)
+    const currentIndex = this.primaryPath
+      ? visible.findIndex((node) => node.relPath === this.primaryPath)
       : -1;
     let nextIndex = currentIndex;
     let handled = true;
@@ -334,7 +460,8 @@ export class TreeView {
         if (node?.isDir) {
           this.toggleExpanded(node.relPath);
         } else if (node && node.openPath !== "") {
-          this.selectedPath = node.relPath;
+          this.selection = new Set([node.relPath]);
+          this.primaryPath = node.relPath;
           this.options.onOpenFile(node.openPath);
           this.render();
         }
@@ -349,20 +476,11 @@ export class TreeView {
     }
     event.preventDefault();
     if (nextIndex !== currentIndex && nextIndex >= 0) {
-      this.selectedPath = visible[nextIndex].relPath;
+      this.primaryPath = visible[nextIndex].relPath;
+      this.selection = new Set([this.primaryPath]);
       this.render();
       this.container.querySelector(".tree-item.selected")?.scrollIntoView({ block: "nearest" });
     }
-  }
-
-  private findSelected(): TreeNode | null {
-    if (!this.selectedPath) {
-      return null;
-    }
-    return (
-      visibleNodes(this.roots, this.expanded).find((node) => node.relPath === this.selectedPath) ??
-      null
-    );
   }
 
   private parentPath(relPath: string): string {

@@ -26,6 +26,46 @@ fn vault_write_file(root: String, rel_path: String, contents: String) -> Result<
 }
 
 #[tauri::command]
+fn vault_write_binary(root: String, rel_path: String, data: String) -> Result<(), String> {
+    vault::write_binary(&root, &rel_path, &data)
+}
+
+#[tauri::command]
+fn vault_import_external(root: String, source: String, rel_path: String) -> Result<(), String> {
+    vault::import_external(&root, &source, &rel_path)
+}
+
+#[tauri::command]
+fn reveal_path(path: String) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("explorer")
+            .arg(format!("/select,{path}"))
+            .spawn()
+            .map_err(|error| error.to_string())?;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .args(["-R", &path])
+            .spawn()
+            .map_err(|error| error.to_string())?;
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let directory = std::path::Path::new(&path)
+            .parent()
+            .map(|parent| parent.to_path_buf())
+            .unwrap_or_else(|| std::path::PathBuf::from(&path));
+        std::process::Command::new("xdg-open")
+            .arg(directory)
+            .spawn()
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
 fn vault_search(
     root: String,
     query: String,
@@ -208,6 +248,9 @@ pub fn run() {
             vault_scan,
             vault_read_file,
             vault_write_file,
+            vault_write_binary,
+            vault_import_external,
+            reveal_path,
             vault_search,
             vault_create_dir,
             vault_rename,

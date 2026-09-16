@@ -15,8 +15,16 @@ const file = (relPath: string) => ({
   isDir: false,
   size: 3,
   modifiedMs: 1,
-  frontmatter: { parent: null, alsoUnder: [], order: null, tags: [], numbers: {} },
-  metrics: { tasksOpen: 0, tasksDone: 0, words: 0, links: [] },
+  frontmatter: {
+    parent: null,
+    alsoUnder: [],
+    order: null,
+    tags: [],
+    color: null,
+    icon: null,
+    numbers: {},
+  },
+  metrics: { tasksOpen: 0, tasksDone: 0, words: 0, links: [], tasks: [] },
 });
 
 describe("VaultStore", () => {

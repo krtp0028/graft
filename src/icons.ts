@@ -36,6 +36,7 @@ const PATHS: Record<string, string[]> = {
   file: ["M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z", "M14 3v5h5"],
   folder: ["M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"],
   "go-to": ["M5 3l14 9-14 9z"],
+  check: ["M5 13l4 4L19 7"],
   node: ["M12 3v18", "M5 8h14"],
 };
 
