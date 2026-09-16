@@ -19,6 +19,10 @@ export const DEFAULT_KEYMAP: readonly KeyBinding[] = [
   { chord: "Mod+I", command: "markdown.italic", context: "global" },
   { chord: "Mod+E", command: "markdown.code", context: "global" },
   { chord: "Mod+K", command: "markdown.link", context: "global" },
+  { chord: "Mod+Shift+D", command: "journal.open_today", context: "global" },
+  { chord: "Mod+=", command: "view.zoom_in", context: "global" },
+  { chord: "Mod+-", command: "view.zoom_out", context: "global" },
+  { chord: "Mod+0", command: "view.zoom_reset", context: "global" },
 ];
 
 export interface Chord {

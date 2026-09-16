@@ -1,7 +1,35 @@
-import { basicSetup } from "codemirror";
+import {
+  autocompletion,
+  closeBrackets,
+  closeBracketsKeymap,
+  completionKeymap,
+} from "@codemirror/autocomplete";
+import type { CompletionContext, CompletionResult } from "@codemirror/autocomplete";
+import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { markdown } from "@codemirror/lang-markdown";
+import {
+  bracketMatching,
+  defaultHighlightStyle,
+  foldGutter,
+  foldKeymap,
+  indentOnInput,
+  syntaxHighlighting,
+} from "@codemirror/language";
+import { highlightSelectionMatches, searchKeymap } from "@codemirror/search";
 import { Compartment, EditorState } from "@codemirror/state";
-import { EditorView, keymap } from "@codemirror/view";
+import type { Extension } from "@codemirror/state";
+import {
+  crosshairCursor,
+  drawSelection,
+  dropCursor,
+  EditorView,
+  highlightActiveLine,
+  highlightActiveLineGutter,
+  highlightSpecialChars,
+  keymap,
+  lineNumbers,
+  rectangularSelection,
+} from "@codemirror/view";
 import * as api from "./api";
 import { config } from "./config";
 import type { AppConfig } from "./config";
@@ -40,6 +68,15 @@ const tokenTheme = EditorView.theme(
     },
     "&.cm-focused .cm-selectionBackground, .cm-selectionBackground, ::selection": {
       backgroundColor: "var(--selection)",
+    },
+    ".cm-tooltip-autocomplete": {
+      border: "1px solid var(--border)",
+      backgroundColor: "var(--bg-surface)",
+      color: "var(--fg)",
+    },
+    ".cm-tooltip-autocomplete ul li[aria-selected]": {
+      backgroundColor: "var(--accent)",
+      color: "var(--accent-fg)",
     },
   },
   { dark: window.matchMedia("(prefers-color-scheme: dark)").matches },
@@ -97,6 +134,60 @@ async function insertImages(root: string, files: File[], view: EditorView): Prom
   view.focus();
 }
 
+function collectClipboardFiles(data: DataTransfer | null): File[] {
+  if (!data) {
+    return [];
+  }
+  const files: File[] = [];
+  for (const item of data.items) {
+    if (item.kind === "file") {
+      const file = item.getAsFile();
+      if (file) {
+        files.push(file);
+      }
+    }
+  }
+  if (files.length === 0) {
+    files.push(...data.files);
+  }
+  return files;
+}
+
+export interface CompletionSources {
+  wiki: (context: CompletionContext) => CompletionResult | null;
+  tag: (context: CompletionContext) => CompletionResult | null;
+}
+
+export function buildCoreExtensions(sources: CompletionSources): Extension[] {
+  return [
+    lineNumbers(),
+    highlightActiveLineGutter(),
+    highlightSpecialChars(),
+    history(),
+    foldGutter(),
+    drawSelection(),
+    dropCursor(),
+    EditorState.allowMultipleSelections.of(true),
+    indentOnInput(),
+    syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
+    bracketMatching(),
+    closeBrackets(),
+    autocompletion({ override: [sources.wiki, sources.tag] }),
+    rectangularSelection(),
+    crosshairCursor(),
+    highlightActiveLine(),
+    highlightSelectionMatches(),
+    keymap.of([
+      ...closeBracketsKeymap,
+      ...defaultKeymap,
+      ...searchKeymap,
+      ...historyKeymap,
+      ...foldKeymap,
+      ...completionKeymap,
+    ]),
+  ];
+}
+
 export interface CursorInfo {
   line: number;
   column: number;
@@ -119,20 +210,57 @@ export function createEditor(
   let applyingExternal = false;
   let saveTimer: number | undefined;
   let currentPath: string | null = null;
-  const states = new Map<string, EditorState>();
+  let knownTags: string[] = [];
 
-  const reportCursor = (view: EditorView): void => {
-    const range = view.state.selection.main;
-    const line = view.state.doc.lineAt(range.head);
-    options.onCursor?.({
-      line: line.number,
-      column: range.head - line.from + 1,
-      selected: range.to - range.from,
-    });
+  const collectTags = (): string[] => {
+    const tags = new Set<string>();
+    for (const entry of store.getState().entries) {
+      if (entry.isDir) {
+        continue;
+      }
+      for (const tag of entry.frontmatter.tags) {
+        const clean = tag.trim();
+        if (clean !== "") {
+          tags.add(clean);
+        }
+      }
+    }
+    return [...tags];
+  };
+
+  const sources: CompletionSources = {
+    wiki: (context) => {
+      const before = context.matchBefore(/\[\[([^[\]\n]*)$/);
+      if (!before) {
+        return null;
+      }
+      const query = before.text.slice(2).toLowerCase();
+      const options = store
+        .getState()
+        .entries.filter((entry) => !entry.isDir)
+        .map((entry) => entry.relPath.replace(/\.md$/i, ""))
+        .filter((path) => query === "" || path.toLowerCase().includes(query))
+        .slice(0, 100)
+        .map((path) => ({ label: path, apply: `${path}]]` }));
+      return { from: before.from + 2, options, validFor: /^[^[\]\n]*$/ };
+    },
+    tag: (context) => {
+      const before = context.matchBefore(/(?:^|\s)#([\w-]*)$/);
+      if (!before) {
+        return null;
+      }
+      const hash = before.text.lastIndexOf("#");
+      const query = before.text.slice(hash + 1).toLowerCase();
+      const options = knownTags
+        .filter((tag) => query === "" || tag.toLowerCase().includes(query))
+        .slice(0, 60)
+        .map((tag) => ({ label: tag }));
+      return { from: before.from + hash + 1, options, validFor: /^[\w-]*$/ };
+    },
   };
 
   const buildExtensions = () => [
-    basicSetup,
+    ...buildCoreExtensions(sources),
     tokenTheme,
     font.of(fontSizeTheme(config.getState().config.editor.fontSize)),
     wrap.of(config.getState().config.editor.wordWrap ? EditorView.lineWrapping : []),
@@ -144,7 +272,7 @@ export function createEditor(
     ),
     EditorView.domEventHandlers({
       paste: (event, view) => {
-        const files = event.clipboardData?.files ? [...event.clipboardData.files] : [];
+        const files = collectClipboardFiles(event.clipboardData);
         const root = store.getState().root;
         if (files.length === 0 || !root) {
           return false;
@@ -154,7 +282,7 @@ export function createEditor(
         return true;
       },
       drop: (event, view) => {
-        const files = event.dataTransfer?.files ? [...event.dataTransfer.files] : [];
+        const files = collectClipboardFiles(event.dataTransfer);
         const root = store.getState().root;
         if (files.length === 0 || !root) {
           return false;
@@ -173,7 +301,13 @@ export function createEditor(
         }, config.getState().config.editor.autosaveDelayMs);
       }
       if (update.selectionSet || update.docChanged) {
-        reportCursor(update.view);
+        const range = update.state.selection.main;
+        const line = update.state.doc.lineAt(range.head);
+        options.onCursor?.({
+          line: line.number,
+          column: range.head - line.from + 1,
+          selected: range.to - range.from,
+        });
       }
     }),
     keymap.of([
@@ -188,12 +322,19 @@ export function createEditor(
     ]),
   ];
 
+  const states = new Map<string, EditorState>();
+  let lastEntriesRef: unknown;
   const view = new EditorView({
     parent,
     state: EditorState.create({ doc: "", extensions: buildExtensions() }),
   });
 
   store.subscribe((state) => {
+    if (state.entries !== lastEntriesRef) {
+      lastEntriesRef = state.entries;
+      knownTags = collectTags();
+    }
+
     if (state.activePath === null) {
       currentPath = null;
       return;
@@ -230,7 +371,7 @@ export function createEditor(
     if (reveal && reveal.path === state.activePath) {
       const lineNumber = Math.max(1, Math.min(reveal.line, view.state.doc.lines));
       const line = view.state.doc.line(lineNumber);
-      view.dispatch({ selection: { anchor: line.from }, scrollIntoView: true });
+      view.dispatch({ selection: { anchor: line.from, head: line.to }, scrollIntoView: true });
       view.focus();
     }
   });
@@ -251,4 +392,38 @@ export function createEditor(
   config.subscribe((state) => applyEditorConfig(state.config));
 
   return view;
+}
+
+export interface Viewer {
+  load(path: string, contents: string): void;
+  clear(): void;
+}
+
+export function createViewer(parent: HTMLElement): Viewer {
+  const language = new Compartment();
+  const emptySources: CompletionSources = { wiki: () => null, tag: () => null };
+  const view = new EditorView({
+    parent,
+    state: EditorState.create({
+      doc: "",
+      extensions: [
+        ...buildCoreExtensions(emptySources),
+        tokenTheme,
+        EditorView.editable.of(false),
+        language.of([]),
+      ],
+    }),
+  });
+
+  return {
+    load(path: string, contents: string): void {
+      view.dispatch({
+        changes: { from: 0, to: view.state.doc.length, insert: contents },
+        effects: language.reconfigure(isMarkdownPath(path) ? markdown() : []),
+      });
+    },
+    clear(): void {
+      view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: "" } });
+    },
+  };
 }

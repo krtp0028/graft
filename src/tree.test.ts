@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { TreeNode } from "./resolver";
-import { visibleNodes } from "./tree";
+import { filterTree, visibleNodes } from "./tree";
 
 const node = (relPath: string, isDir: boolean, children: TreeNode[] = []): TreeNode => ({
   name: relPath.split("/").at(-1) ?? relPath,
@@ -39,5 +39,30 @@ describe("visibleNodes", () => {
       "Alpha.md",
       "child.md",
     ]);
+  });
+});
+
+describe("filterTree", () => {
+  const roots = [
+    node("Docs", true, [node("Docs/guide.md", false)]),
+    node("Random.md", false),
+    node("Alpha.md", false, [node("Beta.md", false)]),
+  ];
+
+  it("keeps a matching directory with its whole subtree", () => {
+    const filtered = filterTree(roots, (candidate) => candidate.name === "Docs");
+    expect(filtered.map((item) => item.relPath)).toEqual(["Docs"]);
+    expect(filtered[0].children.map((item) => item.relPath)).toEqual(["Docs/guide.md"]);
+  });
+
+  it("keeps ancestors of matching files", () => {
+    const filtered = filterTree(roots, (candidate) => candidate.relPath === "Docs/guide.md");
+    expect(filtered.map((item) => item.relPath)).toEqual(["Docs"]);
+  });
+
+  it("drops branches with no matches", () => {
+    const filtered = filterTree(roots, (candidate) => candidate.relPath === "Beta.md");
+    expect(filtered.map((item) => item.relPath)).toEqual(["Alpha.md"]);
+    expect(filtered[0].children.map((item) => item.relPath)).toEqual(["Beta.md"]);
   });
 });

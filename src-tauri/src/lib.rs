@@ -100,6 +100,26 @@ fn vault_restore(root: String, trash_id: String) -> Result<String, String> {
 }
 
 #[tauri::command]
+fn trash_list(root: String) -> Result<Vec<vault::TrashEntry>, String> {
+    vault::trash_list(&root)
+}
+
+#[tauri::command]
+fn trash_delete(root: String, trash_id: String) -> Result<(), String> {
+    vault::trash_delete(&root, &trash_id)
+}
+
+#[tauri::command]
+fn trash_empty(root: String) -> Result<u32, String> {
+    vault::trash_empty(&root)
+}
+
+#[tauri::command]
+fn write_text_absolute(path: String, contents: String) -> Result<(), String> {
+    vault::write_absolute(&path, &contents)
+}
+
+#[tauri::command]
 fn watch_vault(
     app: tauri::AppHandle,
     state: tauri::State<WatcherState>,
@@ -244,6 +264,8 @@ pub fn run() {
         .manage(LuaState(Mutex::new(None)))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .invoke_handler(tauri::generate_handler![
             vault_scan,
             vault_read_file,
@@ -257,6 +279,10 @@ pub fn run() {
             vault_duplicate,
             vault_trash,
             vault_restore,
+            trash_list,
+            trash_delete,
+            trash_empty,
+            write_text_absolute,
             watch_vault,
             config_paths,
             config_read,

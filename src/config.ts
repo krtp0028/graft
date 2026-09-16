@@ -28,6 +28,9 @@ export const ConfigSchema = z.object({
   inherit: z.object({
     keys: z.array(z.string()),
   }),
+  journal: z.object({
+    folder: z.string(),
+  }),
   files: z.object({
     exclude: z.array(z.string()),
   }),
@@ -47,6 +50,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   keymap: {},
   rollup: { tasks: true, words: false, fields: [] },
   inherit: { keys: ["tags"] },
+  journal: { folder: "Journal" },
   files: { exclude: [] },
 };
 
@@ -78,6 +82,9 @@ fields = []
 
 [inherit]
 keys = ["tags"]
+
+[journal]
+folder = "Journal"
 
 [files]
 exclude = []

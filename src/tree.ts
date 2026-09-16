@@ -129,12 +129,11 @@ export class TreeView {
     const paths: string[] = [];
     const collect = (nodes: TreeNode[]): void => {
       for (const node of nodes) {
-        if (
-          this.selection.has(node.relPath) &&
-          node.openPath !== "" &&
-          !paths.includes(node.openPath)
-        ) {
-          paths.push(node.openPath);
+        if (this.selection.has(node.relPath) && node.relPath !== "__dangling__") {
+          const value = node.openPath !== "" ? node.openPath : node.relPath;
+          if (!paths.includes(value)) {
+            paths.push(value);
+          }
         }
         collect(node.children);
       }
@@ -274,13 +273,16 @@ export class TreeView {
         }
       }
 
-      if (node.openPath !== "") {
+      const isRealDir = node.isDir && node.openPath === "" && node.relPath !== "__dangling__";
+      const isFileNode = !node.isDir && node.openPath !== "" && !node.mirror;
+
+      if (node.openPath !== "" || isRealDir) {
         item.draggable = true;
         item.addEventListener("dragstart", (event) => {
           this.dragPaths =
             this.selection.has(node.relPath) && this.getSelection().length > 0
               ? this.getSelection()
-              : [node.openPath];
+              : [node.openPath !== "" ? node.openPath : node.relPath];
           event.dataTransfer?.setData("application/x-graft-paths", JSON.stringify(this.dragPaths));
           if (event.dataTransfer) {
             event.dataTransfer.effectAllowed = "move";
@@ -291,8 +293,6 @@ export class TreeView {
         });
       }
 
-      const isRealDir = node.isDir && node.openPath === "" && node.relPath !== "__dangling__";
-      const isFileNode = !node.isDir && node.openPath !== "" && !node.mirror;
       if (isRealDir || isFileNode) {
         const dropTarget = isRealDir ? node.relPath : node.openPath;
 

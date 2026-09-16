@@ -37,7 +37,7 @@ const entry = (relPath: string, open: number, done: number, hours: number | null
     icon: null,
     numbers: hours === null ? {} : { hours },
   },
-  metrics: { tasksOpen: open, tasksDone: done, words: 10, links: [], tasks: [] },
+  metrics: { tasksOpen: open, tasksDone: done, words: 10, links: [], tasks: [], images: [] },
 });
 
 describe("computeRollups", () => {

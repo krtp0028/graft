@@ -24,7 +24,7 @@ const file = (relPath: string) => ({
     icon: null,
     numbers: {},
   },
-  metrics: { tasksOpen: 0, tasksDone: 0, words: 0, links: [], tasks: [] },
+  metrics: { tasksOpen: 0, tasksDone: 0, words: 0, links: [], tasks: [], images: [] },
 });
 
 describe("VaultStore", () => {
@@ -95,6 +95,28 @@ describe("VaultStore", () => {
 
     expect(mocked.readFile).not.toHaveBeenCalled();
     expect(mocked.writeFile).not.toHaveBeenCalled();
+  });
+
+  it("reorders tabs and updates cached tab contents", async () => {
+    mocked.scanVault.mockResolvedValue([file("a.md"), file("b.md")]);
+    mocked.readFile.mockImplementation((_root: string, relPath: string) =>
+      Promise.resolve(relPath === "a.md" ? "one" : "two"),
+    );
+    const store = new VaultStore();
+    await store.openVault("C:/vault");
+    await store.openFile("a.md");
+    await store.openFile("b.md");
+
+    store.moveTab(0, 1);
+    expect(store.getState().tabs).toEqual(["b.md", "a.md"]);
+    expect(store.getState().activePath).toBe("b.md");
+
+    store.setTabContents("b.md", "updated");
+    expect(store.getState().contents).toBe("updated");
+
+    store.setContents("dirty edit");
+    store.setTabContents("b.md", "should be ignored while dirty");
+    expect(store.getState().contents).toBe("dirty edit");
   });
 
   it("notifies subscribers of state changes", async () => {

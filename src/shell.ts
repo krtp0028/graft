@@ -1,10 +1,15 @@
 import * as api from "./api";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open } from "@tauri-apps/plugin-dialog";
+import { relaunch } from "@tauri-apps/plugin-process";
+import { check as checkUpdate } from "@tauri-apps/plugin-updater";
+import { AttachmentsPanel } from "./attachments";
 import { commands } from "./commands";
 import { config } from "./config";
-import { createEditor } from "./editor";
+import { createEditor, createViewer } from "./editor";
+import { exportNoteAsHtml, exportNoteAsPdf } from "./export";
 import { openHealthPanel } from "./health";
 import { icon } from "./icons";
 import { DEFAULT_KEYMAP, isMacPlatform, matchesEvent } from "./keymap";
@@ -125,10 +130,12 @@ export function mountShell(root: HTMLElement): void {
   const formatBar = el("div", "format-bar");
   const editorHost = el("div", "editor-host");
   editorPane.append(formatBar, editorHost);
+  const secondaryPane = el("section", "secondary-pane");
+  secondaryPane.hidden = true;
   const splitter = el("div", "splitter");
   const previewPane = el("section", "preview-pane");
   previewPane.textContent = "Open a note to see the preview";
-  docArea.append(editorPane, splitter, previewPane);
+  docArea.append(editorPane, secondaryPane, splitter, previewPane);
 
   const statusBar = el("footer", "status-bar");
   const statusVault = el("span", "status-vault");
@@ -176,6 +183,7 @@ export function mountShell(root: HTMLElement): void {
     },
   });
   createPreview(previewPane, store);
+  const secondaryViewer = createViewer(secondaryPane);
 
   let noticeTimer: number | undefined;
   const showNotice = (text: string): void => {
@@ -195,6 +203,38 @@ export function mountShell(root: HTMLElement): void {
     editorView.focus();
   };
   const lua = new LuaController(insertAtCursor, showNotice);
+
+  const importDroppedFiles = async (paths: string[]): Promise<void> => {
+    const { root } = store.getState();
+    if (!root || paths.length === 0) {
+      return;
+    }
+    const stamp = Date.now();
+    const snippets: string[] = [];
+    for (const [index, path] of paths.entries()) {
+      const name = path.split(/[\\/]/).pop() ?? `file-${index}`;
+      const safe = name.replace(/[^\w.-]+/g, "-");
+      const relPath = `assets/${stamp}-${index}-${safe}`;
+      try {
+        await api.importExternal(root, path, relPath);
+        const isImage = /\.(png|jpe?g|gif|webp)$/i.test(name);
+        snippets.push(isImage ? `![${name}](${relPath})` : `[${name}](${relPath})`);
+      } catch (error) {
+        showNotice(`import failed: ${String(error)}`);
+      }
+    }
+    if (snippets.length > 0) {
+      insertAtCursor(snippets.join("\n"));
+      await store.refresh();
+    }
+  };
+  void getCurrentWebview()
+    .onDragDropEvent((event) => {
+      if (event.payload.type === "drop") {
+        void importDroppedFiles(event.payload.paths);
+      }
+    })
+    .catch(() => undefined);
 
   const tree = new TreeView({
     container: treeContainer,
@@ -261,6 +301,27 @@ export function mountShell(root: HTMLElement): void {
 
     if (position === "into") {
       for (const openPath of openPaths) {
+        const entry = store.getState().entries.find((candidate) => candidate.relPath === openPath);
+        if (entry?.isDir) {
+          const targetIsDir = entries.some(
+            (candidate) => candidate.relPath === target && candidate.isDir,
+          );
+          const destinationDir = targetIsDir ? target : parentDir(target);
+          const to = joinPath(destinationDir, baseName(openPath));
+          if (to !== openPath && !to.startsWith(`${openPath}/`)) {
+            await api.renamePath(root, openPath, to);
+            await rewriteReferences(root, store.getState().entries, openPath, to);
+            undo.push({
+              label: `move ${openPath}`,
+              run: async () => {
+                await api.renamePath(root, to, openPath);
+                await rewriteReferences(root, store.getState().entries, to, openPath);
+                await store.refresh();
+              },
+            });
+          }
+          continue;
+        }
         await moveInto(root, openPath, target, mirror);
       }
       await store.refresh();
@@ -755,6 +816,11 @@ export function mountShell(root: HTMLElement): void {
         if (to === path) {
           continue;
         }
+        const entry = entries.find((candidate) => candidate.relPath === path);
+        if (source.mode === "copy" && entry?.isDir) {
+          showNotice("folder copy is not supported yet");
+          continue;
+        }
         if (source.mode === "copy") {
           await api.duplicatePath(root, path, to);
           undo.push({
@@ -895,6 +961,140 @@ export function mountShell(root: HTMLElement): void {
     run: () => tree.collapseAll(),
   });
 
+  const applyZoom = (value: number, announce = true): void => {
+    const clamped = Math.min(1.6, Math.max(0.7, Math.round(value * 100) / 100));
+    document.body.style.zoom = String(clamped);
+    window.localStorage.setItem("graft.zoom", String(clamped));
+    if (announce) {
+      showNotice(`zoom ${Math.round(clamped * 100)}%`);
+    }
+  };
+  const currentZoom = (): number => Number(window.localStorage.getItem("graft.zoom") ?? "1");
+  applyZoom(currentZoom(), false);
+
+  commands.register({
+    id: "view.zoom_in",
+    title: "Zoom in",
+    run: () => applyZoom(currentZoom() + 0.1),
+  });
+  commands.register({
+    id: "view.zoom_out",
+    title: "Zoom out",
+    run: () => applyZoom(currentZoom() - 0.1),
+  });
+  commands.register({
+    id: "view.zoom_reset",
+    title: "Reset zoom",
+    run: () => applyZoom(1),
+  });
+
+  commands.register({
+    id: "journal.open_today",
+    title: "Open today's journal",
+    run: async () => {
+      const { root, entries } = store.getState();
+      if (!root) {
+        return;
+      }
+      const now = new Date();
+      const date = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+      const folder = config.getState().config.journal.folder.replace(/^\/+|\/+$/g, "");
+      const relPath = folder === "" ? `${date}.md` : `${folder}/${date}.md`;
+      if (!entries.some((entry) => entry.relPath === relPath)) {
+        const frontmatter = await lua.hook("new_note", relPath);
+        let contents = `# ${date}\n`;
+        if (frontmatter) {
+          contents = `${frontmatter}\n${contents}`;
+        }
+        await api.writeFile(root, relPath, contents);
+        await store.refresh();
+      }
+      await store.openFile(relPath);
+    },
+  });
+
+  commands.register({
+    id: "export.note_html",
+    title: "Export note as HTML",
+    run: async () => {
+      const { activePath, contents } = store.getState();
+      if (!activePath) {
+        return;
+      }
+      const target = await exportNoteAsHtml(activePath, contents);
+      if (target) {
+        showNotice(`exported ${target}`);
+      }
+    },
+  });
+
+  commands.register({
+    id: "export.note_pdf",
+    title: "Print / export note as PDF",
+    run: async () => {
+      const { activePath, contents } = store.getState();
+      if (!activePath) {
+        return;
+      }
+      await exportNoteAsPdf(activePath, contents);
+      showNotice("opened in your browser — use Print to save as PDF");
+    },
+  });
+
+  const attachmentsPanel = new AttachmentsPanel(app, {
+    store,
+    onNotice: showNotice,
+    onChanged: () => store.refresh(),
+  });
+  commands.register({
+    id: "attachments.manage",
+    title: "Attachments & trash",
+    run: () => attachmentsPanel.open(),
+  });
+
+  commands.register({
+    id: "update.check",
+    title: "Check for updates",
+    run: async () => {
+      try {
+        const update = await checkUpdate();
+        if (!update) {
+          showNotice("up to date");
+          return;
+        }
+        showNotice(`downloading v${update.version}...`);
+        await update.downloadAndInstall();
+        await relaunch();
+      } catch {
+        showNotice("updates are not configured for this build");
+      }
+    },
+  });
+
+  commands.register({
+    id: "pane.open_secondary",
+    title: "Open selected note in split view",
+    run: async () => {
+      const { root } = store.getState();
+      const target = tree.getSelected()?.openPath;
+      if (!root || !target) {
+        return;
+      }
+      const contents = await api.readFile(root, target);
+      secondaryPane.hidden = false;
+      secondaryViewer.load(target, contents);
+    },
+  });
+
+  commands.register({
+    id: "pane.close_secondary",
+    title: "Close split view",
+    run: () => {
+      secondaryPane.hidden = true;
+      secondaryViewer.clear();
+    },
+  });
+
   commands.register({
     id: "tree.filter_tasks",
     title: "Filter tree: open tasks",
@@ -959,9 +1159,10 @@ export function mountShell(root: HTMLElement): void {
   const renderTabBar = (): void => {
     const { tabs, activePath } = store.getState();
     tabBar.hidden = tabs.length === 0;
-    const elements = tabs.map((path) => {
+    const elements = tabs.map((path, index) => {
       const tab = document.createElement("div");
       tab.className = "tab";
+      tab.draggable = true;
       if (path === activePath) {
         tab.classList.add("active");
       }
@@ -992,6 +1193,20 @@ export function mountShell(root: HTMLElement): void {
           event.preventDefault();
           closeTab(path);
         }
+      });
+      tab.addEventListener("dragstart", (event) => {
+        event.dataTransfer?.setData("application/x-graft-tab", String(index));
+      });
+      tab.addEventListener("dragover", (event) => {
+        event.preventDefault();
+      });
+      tab.addEventListener("drop", (event) => {
+        const raw = event.dataTransfer?.getData("application/x-graft-tab");
+        if (raw === undefined || raw === "") {
+          return;
+        }
+        event.preventDefault();
+        store.moveTab(Number(raw), index);
       });
       return tab;
     });
@@ -1059,6 +1274,17 @@ export function mountShell(root: HTMLElement): void {
 
   const handleExternalChange = async (): Promise<void> => {
     await store.refresh();
+    const snapshot = store.getState();
+    if (snapshot.root) {
+      for (const tab of snapshot.tabs) {
+        try {
+          const disk = await api.readFile(snapshot.root, tab);
+          store.setTabContents(tab, disk);
+        } catch {
+          // the tab file may have been removed; leave it as-is
+        }
+      }
+    }
     const state = store.getState();
     if (!state.root || !state.activePath) {
       return;

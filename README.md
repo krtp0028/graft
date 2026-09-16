@@ -13,6 +13,9 @@ Lightweight hierarchical Markdown notes. A native desktop app (Tauri 2 + Rust + 
 - **Lua scripting** — `init.lua` with commands, hooks, and keymaps
 - **Attachments** — paste or drop images into a note; they land in `assets/` and render in the preview
 - **Tag browser & tasks** — tag counts in the sidebar, and an open-tasks panel with click-to-jump
+- **Autocomplete** — `[[` suggests notes, `#` suggests tags while typing
+- **Daily notes** — `Ctrl+Shift+D` opens (or creates) today's note under the configured journal folder
+- **Split view, zoom, export** — a read-only second pane, `Ctrl+=`/`Ctrl+-`/`Ctrl+0`, HTML export and browser-based PDF printing
 - **Node colors & icons** — `color:` and `icon:` frontmatter render in the tree
 - **CherryTree-style UI** — dense toolbar, icon tree with strong selection, Markdown formatting bar, native menu bar, note tabs, and a status bar with node metadata and cursor position
 - **Lightweight** — ~5 MB exe, ~1.8 MB installer, ~270 ms cold start, plain files on disk
@@ -89,8 +92,11 @@ fields = ["hours"]
 [inherit]
 keys = ["tags"]
 
+[journal]
+folder = "Journal"
+
 [keymap]
-"Ctrl+Alt+N" = "tree.new_note"
+"Ctrl+Alt+N" = "tree.add_node"
 ```
 
 Theme files support inheritance and palettes:
@@ -145,7 +151,20 @@ Hooks: `startup`, `open`, `save`, `new_note`, `tree_change`. Command return valu
 | Drag onto a folder                          | Set `parent`                                          |
 | `Ctrl+Z` (tree focus)                       | Undo last file operation                              |
 | `Ctrl+B` / `Ctrl+I` / `Ctrl+E` / `Ctrl+K`   | Bold / italic / inline code / link (editor)           |
+| `Ctrl+Shift+D`                              | Open today's journal                                  |
+| `Ctrl+=` / `Ctrl+-` / `Ctrl+0`              | Zoom in / out / reset                                 |
 | `Ctrl+W` / `Ctrl+Tab`                       | Close / cycle tabs                                    |
+
+## Auto-updates
+
+Updates are opt-in and require signing keys:
+
+1. `npx tauri signer generate -w ~/.tauri/graft.key` and keep the private key out of the repo.
+2. Put the public key in `src-tauri/tauri.conf.json` under `plugins.updater.pubkey` and set `bundle.createUpdaterArtifacts` to `true`.
+3. Add `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` as repository secrets; the release workflow signs the bundles.
+4. Host `latest.json` (with the signed artifacts) somewhere reachable and list it in `plugins.updater.endpoints`.
+
+Until configured, **Help → Check for Updates** reports that updates are not configured.
 
 ## Development
 

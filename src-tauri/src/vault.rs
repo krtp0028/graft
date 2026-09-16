@@ -45,6 +45,15 @@ pub struct FileMetrics {
     pub words: u32,
     pub links: Vec<String>,
     pub tasks: Vec<TaskItem>,
+    pub images: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TrashEntry {
+    pub id: String,
+    pub size: u64,
+    pub modified_ms: i64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -275,6 +284,68 @@ pub fn trash_restore(root: &str, trash_id: &str) -> Result<String, String> {
     }
     fs::rename(&trash_path, &destination).map_err(|error| error.to_string())?;
     Ok(original)
+}
+
+pub fn trash_list(root: &str) -> Result<Vec<TrashEntry>, String> {
+    let trash_dir = Path::new(root).join(".graft").join("trash");
+    if !trash_dir.is_dir() {
+        return Ok(Vec::new());
+    }
+    let mut entries = Vec::new();
+    for entry in fs::read_dir(&trash_dir)
+        .map_err(|error| error.to_string())?
+        .flatten()
+    {
+        let metadata = match entry.metadata() {
+            Ok(metadata) => metadata,
+            Err(_) => continue,
+        };
+        let modified_ms = metadata
+            .modified()
+            .ok()
+            .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+            .map(|duration| duration.as_millis() as i64)
+            .unwrap_or(0);
+        entries.push(TrashEntry {
+            id: entry.file_name().to_string_lossy().into_owned(),
+            size: if metadata.is_dir() { 0 } else { metadata.len() },
+            modified_ms,
+        });
+    }
+    entries.sort_by_key(|entry| std::cmp::Reverse(entry.modified_ms));
+    Ok(entries)
+}
+
+pub fn trash_delete(root: &str, trash_id: &str) -> Result<(), String> {
+    if trash_id.contains('/') || trash_id.contains('\\') || trash_id.contains("..") {
+        return Err(format!("invalid trash id: {trash_id}"));
+    }
+    let path = Path::new(root).join(".graft").join("trash").join(trash_id);
+    if !path.exists() {
+        return Err(format!("trash entry not found: {trash_id}"));
+    }
+    if path.is_dir() {
+        fs::remove_dir_all(&path).map_err(|error| error.to_string())
+    } else {
+        fs::remove_file(&path).map_err(|error| error.to_string())
+    }
+}
+
+pub fn trash_empty(root: &str) -> Result<u32, String> {
+    let entries = trash_list(root)?;
+    let count = entries.len() as u32;
+    for entry in entries {
+        trash_delete(root, &entry.id)?;
+    }
+    Ok(count)
+}
+
+pub fn write_absolute(path: &str, contents: &str) -> Result<(), String> {
+    let path = Path::new(path);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    fs::write(path, contents).map_err(|error| error.to_string())
 }
 
 fn walk(root: &Path, dir: &Path, entries: &mut Vec<FileMeta>) {
@@ -529,6 +600,24 @@ pub fn count_metrics(head: &str) -> FileMetrics {
             metrics.links.push(target.to_string());
         }
         remaining = &after[end + 2..];
+    }
+
+    let mut remaining = head;
+    while let Some(start) = remaining.find("![") {
+        let after = &remaining[start + 2..];
+        let Some(label_end) = after.find("](") else {
+            remaining = &remaining[start + 2..];
+            continue;
+        };
+        let after_url = &after[label_end + 2..];
+        let Some(url_end) = after_url.find(')') else {
+            break;
+        };
+        let url = after_url[..url_end].trim();
+        if !url.is_empty() && !url.starts_with("http") {
+            metrics.images.push(url.to_string());
+        }
+        remaining = &after_url[url_end + 1..];
     }
 
     metrics
@@ -831,6 +920,43 @@ mod tests {
         let frontmatter = super::parse_frontmatter(head).unwrap();
         assert_eq!(frontmatter.color.as_deref(), Some("#c0392b"));
         assert_eq!(frontmatter.icon.as_deref(), Some("*"));
+    }
+
+    #[test]
+    fn extracts_image_references() {
+        let head = "![shot](assets/a.png)\n![remote](https://x/y.png)\n![rel](../assets/b.jpg)\n";
+        let metrics = super::count_metrics(head);
+        assert_eq!(metrics.images, vec!["assets/a.png", "../assets/b.jpg"]);
+    }
+
+    #[test]
+    fn trash_list_delete_and_empty() {
+        let vault = temp_vault();
+        let root = vault.to_str().unwrap();
+        write_file(root, "a.md", "x").unwrap();
+        write_file(root, "b.md", "y").unwrap();
+
+        let first = super::trash_move(root, "a.md").unwrap();
+        super::trash_move(root, "b.md").unwrap();
+        assert_eq!(super::trash_list(root).unwrap().len(), 2);
+
+        super::trash_delete(root, &first).unwrap();
+        assert_eq!(super::trash_list(root).unwrap().len(), 1);
+        assert!(super::trash_delete(root, "../escape").is_err());
+
+        assert_eq!(super::trash_empty(root).unwrap(), 1);
+        assert!(super::trash_list(root).unwrap().is_empty());
+
+        fs::remove_dir_all(vault).unwrap();
+    }
+
+    #[test]
+    fn writes_absolute_files() {
+        let vault = temp_vault();
+        let path = vault.join("out/export.html");
+        super::write_absolute(path.to_str().unwrap(), "<html>").unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "<html>");
+        fs::remove_dir_all(vault).unwrap();
     }
 
     #[test]

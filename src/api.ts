@@ -21,6 +21,7 @@ export interface FileMetrics {
   words: number;
   links: string[];
   tasks: TaskItem[];
+  images: string[];
 }
 
 export interface FileMeta {
@@ -74,6 +75,28 @@ export function trashPath(root: string, relPath: string): Promise<string> {
 
 export function restoreTrash(root: string, trashId: string): Promise<string> {
   return invoke("vault_restore", { root, trashId });
+}
+
+export interface TrashEntry {
+  id: string;
+  size: number;
+  modifiedMs: number;
+}
+
+export function trashList(root: string): Promise<TrashEntry[]> {
+  return invoke("trash_list", { root });
+}
+
+export function trashDelete(root: string, trashId: string): Promise<void> {
+  return invoke("trash_delete", { root, trashId });
+}
+
+export function trashEmpty(root: string): Promise<number> {
+  return invoke("trash_empty", { root });
+}
+
+export function writeTextAbsolute(path: string, contents: string): Promise<void> {
+  return invoke("write_text_absolute", { path, contents });
 }
 
 export function watchVault(root: string): Promise<void> {

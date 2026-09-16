@@ -182,6 +182,26 @@ export class VaultStore {
     return this.tabDirty.has(relPath);
   }
 
+  moveTab(from: number, to: number): void {
+    const tabs = [...this.state.tabs];
+    if (from < 0 || from >= tabs.length || to < 0 || to >= tabs.length || from === to) {
+      return;
+    }
+    const [moved] = tabs.splice(from, 1);
+    tabs.splice(to, 0, moved);
+    this.setState({ tabs });
+  }
+
+  setTabContents(relPath: string, contents: string): void {
+    if (this.tabDirty.has(relPath)) {
+      return;
+    }
+    this.tabContents.set(relPath, contents);
+    if (this.state.activePath === relPath && this.state.contents !== contents) {
+      this.setState({ contents });
+    }
+  }
+
   clearError(): void {
     this.setState({ error: null });
   }

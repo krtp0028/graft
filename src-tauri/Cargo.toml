@@ -27,6 +27,8 @@ dirs = "7.0.0"
 notify = "8.2.0"
 mlua = { version = "0.12.1", features = ["lua54", "vendored", "send"] }
 base64 = "0.23.1"
+tauri-plugin-updater = "2.11.0"
+tauri-plugin-process = "2.3.1"
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration

@@ -26,7 +26,7 @@ const meta = (relPath: string, options: MetaOptions = {}): FileMeta => ({
     icon: null,
     numbers: {},
   },
-  metrics: { tasksOpen: 0, tasksDone: 0, words: 0, links: [], tasks: [] },
+  metrics: { tasksOpen: 0, tasksDone: 0, words: 0, links: [], tasks: [], images: [] },
 });
 
 const find = (nodes: TreeNode[], relPath: string): TreeNode | undefined => {

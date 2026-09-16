@@ -42,6 +42,10 @@ const md = new MarkdownIt({
   },
 });
 
+export function renderMarkdown(contents: string): string {
+  return DOMPurify.sanitize(md.render(contents));
+}
+
 export function createPreview(container: HTMLElement, store: VaultStore): void {
   let renderTimer: number | undefined;
   let lastPath: string | null | undefined;

@@ -30,4 +30,17 @@ describe("upsertFrontmatter", () => {
       '---\nparent: "Weird:Path"\n---\nbody',
     );
   });
+
+  it("stores node color and icon", () => {
+    expect(upsertFrontmatter("body", { color: "#c0392b", icon: "*" })).toBe(
+      "---\ncolor: #c0392b\nicon: *\n---\nbody",
+    );
+  });
+
+  it("clears color and icon with null", () => {
+    const contents = "---\ncolor: #fff\nicon: x\ntags: [a]\n---\nbody";
+    expect(upsertFrontmatter(contents, { color: null, icon: null })).toBe(
+      "---\ntags: [a]\n---\nbody",
+    );
+  });
 });
