@@ -125,20 +125,21 @@ Hooks: `startup`, `open`, `save`, `new_note`, `tree_change`. Command return valu
 
 ## Default keymap
 
-| Shortcut                                    | Action                              |
-| ------------------------------------------- | ----------------------------------- |
-| `Ctrl+P` / `Ctrl+O`                         | Quick open / Open folder            |
-| `Ctrl+Shift+P`                              | Command palette                     |
-| `Ctrl+S`, `Ctrl+,`-style config via palette | Save; open config                   |
-| `Ctrl+Shift+V`                              | Cycle preview position              |
-| `Ctrl+F`-style search                       | `Ctrl+Shift+F` searches the vault   |
-| `Ctrl+N` / `Ctrl+Shift+N`                   | New note / new folder (tree focus)  |
-| `F2` / `Delete`                             | Rename / move to trash (tree focus) |
-| `Alt+↑` / `Alt+↓`                           | Reorder sibling (tree focus)        |
-| `Alt+drag` onto a folder                    | Add `also_under` mirror             |
-| Drag onto a folder                          | Set `parent`                        |
-| `Ctrl+Z` (tree focus)                       | Undo last file operation            |
-| `Ctrl+W` / `Ctrl+Tab`                       | Close / cycle tabs                  |
+| Shortcut                                    | Action                                                |
+| ------------------------------------------- | ----------------------------------------------------- |
+| `Ctrl+P` / `Ctrl+O`                         | Quick open / Open folder                              |
+| `Ctrl+Shift+P`                              | Command palette                                       |
+| `Ctrl+S`, `Ctrl+,`-style config via palette | Save; open config                                     |
+| `Ctrl+Shift+V`                              | Cycle preview position                                |
+| `Ctrl+F`-style search                       | `Ctrl+Shift+F` searches the vault                     |
+| `Ctrl+N` / `Ctrl+Shift+N`                   | Add node after selected / add child node (tree focus) |
+| `Ctrl+Alt+N`                                | New folder (tree focus)                               |
+| `F2` / `Delete`                             | Rename / move to trash (tree focus)                   |
+| `Alt+↑` / `Alt+↓`                           | Reorder sibling (tree focus)                          |
+| `Alt+drag` onto a folder                    | Add `also_under` mirror                               |
+| Drag onto a folder                          | Set `parent`                                          |
+| `Ctrl+Z` (tree focus)                       | Undo last file operation                              |
+| `Ctrl+W` / `Ctrl+Tab`                       | Close / cycle tabs                                    |
 
 ## Development
 

@@ -444,6 +444,14 @@ body {
   text-align: center;
 }
 
+.twisty.clickable {
+  cursor: pointer;
+}
+
+.twisty.clickable:hover {
+  color: var(--accent);
+}
+
 .doc-area {
   display: flex;
   flex: 1;

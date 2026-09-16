@@ -6,7 +6,7 @@ export function visibleNodes(roots: TreeNode[], expanded: ReadonlySet<string>): 
   const visit = (nodes: TreeNode[]): void => {
     for (const node of nodes) {
       visible.push(node);
-      if (node.isDir && expanded.has(node.relPath)) {
+      if ((node.isDir || node.children.length > 0) && expanded.has(node.relPath)) {
         visit(node.children);
       }
     }
@@ -144,7 +144,16 @@ export class TreeView {
 
       const twisty = document.createElement("span");
       twisty.className = "twisty";
-      twisty.textContent = node.isDir ? (this.expanded.has(node.relPath) ? "v" : ">") : "";
+      const expandable = node.isDir || node.children.length > 0;
+      twisty.textContent = expandable ? (this.expanded.has(node.relPath) ? "v" : ">") : "";
+      if (expandable) {
+        twisty.classList.add("clickable");
+        twisty.addEventListener("click", (event) => {
+          event.stopPropagation();
+          this.container.focus();
+          this.toggleExpanded(node.relPath);
+        });
+      }
 
       const label = document.createElement("span");
       label.className = "label";
@@ -204,10 +213,13 @@ export class TreeView {
         });
       }
 
-      if (node.isDir && node.openPath === "" && node.relPath !== "__dangling__") {
+      const isRealDir = node.isDir && node.openPath === "" && node.relPath !== "__dangling__";
+      const isFileNode = !node.isDir && node.openPath !== "" && !node.mirror;
+      if (isRealDir || isFileNode) {
+        const dropTarget = isRealDir ? node.relPath : node.openPath;
         item.addEventListener("dragover", (event) => {
           const path = this.dragPath;
-          if (path && path !== node.relPath && !node.relPath.startsWith(`${path}/`)) {
+          if (path && path !== dropTarget && !dropTarget.startsWith(`${path}/`)) {
             event.preventDefault();
             item.classList.add("drop-target");
           }
@@ -221,7 +233,7 @@ export class TreeView {
           if (path && this.options.onMove) {
             event.preventDefault();
             event.stopPropagation();
-            this.options.onMove({ openPath: path, targetDir: node.relPath, mirror: event.altKey });
+            this.options.onMove({ openPath: path, targetDir: dropTarget, mirror: event.altKey });
           }
         });
       }
@@ -289,7 +301,7 @@ export class TreeView {
         break;
       case "ArrowRight": {
         const node = visible[currentIndex];
-        if (node?.isDir && !this.expanded.has(node.relPath)) {
+        if (node && (node.isDir || node.children.length > 0) && !this.expanded.has(node.relPath)) {
           this.toggleExpanded(node.relPath);
         } else {
           nextIndex = Math.min(currentIndex + 1, visible.length - 1);
@@ -298,7 +310,7 @@ export class TreeView {
       }
       case "ArrowLeft": {
         const node = visible[currentIndex];
-        if (node?.isDir && this.expanded.has(node.relPath)) {
+        if (node && (node.isDir || node.children.length > 0) && this.expanded.has(node.relPath)) {
           this.toggleExpanded(node.relPath);
         } else if (node) {
           const parent = visible.find(

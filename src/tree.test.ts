@@ -29,4 +29,13 @@ describe("visibleNodes", () => {
       "root.md",
     ]);
   });
+
+  it("expands notes that have child nodes", () => {
+    const fileParent = node("Alpha.md", false, [node("child.md", false)]);
+    expect(visibleNodes([fileParent], new Set()).map((item) => item.relPath)).toEqual(["Alpha.md"]);
+    expect(visibleNodes([fileParent], new Set(["Alpha.md"])).map((item) => item.relPath)).toEqual([
+      "Alpha.md",
+      "child.md",
+    ]);
+  });
 });

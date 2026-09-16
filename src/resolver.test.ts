@@ -67,6 +67,20 @@ describe("resolveVault", () => {
     expect(find(roots, "loose.md")).toBeDefined();
   });
 
+  it("nests notes under a parent note", () => {
+    const { roots } = resolveVault([
+      meta("Alpha.md"),
+      meta("child.md", { parent: "Alpha.md" }),
+      meta("grandchild.md", { parent: "child.md" }),
+    ]);
+
+    const alpha = find(roots, "Alpha.md");
+    const child = find(roots, "child.md");
+    expect(alpha?.children.map((node) => node.relPath)).toEqual(["child.md"]);
+    expect(child?.children.map((node) => node.relPath)).toEqual(["grandchild.md"]);
+    expect(roots.some((node) => node.relPath === "child.md")).toBe(false);
+  });
+
   it("resolves parent references without the .md extension", () => {
     const byPath = new Map([["Alpha.md", meta("Alpha.md")]]);
     expect(resolveTargetRef(byPath, "Alpha")).toBe("Alpha.md");

@@ -82,7 +82,7 @@ exclude = []
 
 # Keymap overrides: chord = command id
 [keymap]
-# "Ctrl+Alt+N" = "tree.new_note"
+# "Ctrl+Alt+N" = "tree.add_node"
 `;
 
 export interface Layer {

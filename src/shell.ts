@@ -278,38 +278,126 @@ export function mountShell(root: HTMLElement): void {
 
   const joinPath = (dir: string | null, name: string): string => (dir ? `${dir}/${name}` : name);
 
+  const uniqueNodeName = (dir: string | null): string => {
+    const existing = new Set(
+      store
+        .getState()
+        .entries.filter((entry) => !entry.isDir && parentDir(entry.relPath) === dir)
+        .map((entry) => baseName(entry.relPath)),
+    );
+    let candidate = "New Node.md";
+    let counter = 2;
+    while (existing.has(candidate)) {
+      candidate = `New Node ${counter}.md`;
+      counter += 1;
+    }
+    return candidate;
+  };
+
+  const assignOrders = async (orderedPaths: string[]): Promise<void> => {
+    const { root, entries } = store.getState();
+    if (!root) {
+      return;
+    }
+    const byPath = new Map(entries.map((entry) => [entry.relPath, entry]));
+    for (const [index, path] of orderedPaths.entries()) {
+      const desired = (index + 1) * 10;
+      const entry = byPath.get(path);
+      if (entry && entry.frontmatter.order === desired) {
+        continue;
+      }
+      const contents = await api.readFile(root, path);
+      await api.writeFile(root, path, upsertFrontmatter(contents, { order: desired }));
+    }
+  };
+
+  const addNode = async (mode: "sibling" | "child"): Promise<void> => {
+    const { root } = store.getState();
+    if (!root) {
+      return;
+    }
+    const selected = tree.getSelected();
+    const selectedFile =
+      selected && !selected.isDir && selected.openPath !== "" ? selected.openPath : null;
+    const selectedDir =
+      selected && selected.isDir && selected.openPath === "" && selected.relPath !== "__dangling__"
+        ? selected.relPath
+        : null;
+
+    let physicalDir: string | null = null;
+    let parentValue: string | null = null;
+
+    if (mode === "sibling") {
+      if (selectedFile) {
+        physicalDir = parentDir(selectedFile);
+      } else if (selectedDir) {
+        physicalDir = parentDir(selectedDir);
+      }
+    } else if (selectedDir) {
+      physicalDir = selectedDir;
+    } else if (selectedFile) {
+      physicalDir = parentDir(selectedFile);
+      parentValue = selectedFile.replace(/\.md$/i, "");
+    }
+
+    const fileName = uniqueNodeName(physicalDir);
+    const relPath = joinPath(physicalDir, fileName);
+    const title = fileName.replace(/\.md$/i, "");
+    const hookFrontmatter = await lua.hook("new_note", relPath);
+
+    let contents = `# ${title}\n`;
+    if (hookFrontmatter) {
+      contents = `${hookFrontmatter}\n${contents}`;
+    }
+    if (parentValue) {
+      contents = upsertFrontmatter(contents, { parent: parentValue });
+    }
+    await api.writeFile(root, relPath, contents);
+    undo.push({
+      label: `add node ${relPath}`,
+      run: async () => {
+        await api.trashPath(root, relPath);
+        await store.refresh();
+      },
+    });
+    await store.refresh();
+
+    if (mode === "sibling" && selectedFile) {
+      const siblings = store
+        .getState()
+        .entries.filter((entry) => !entry.isDir && parentDir(entry.relPath) === physicalDir)
+        .sort((a, b) => {
+          const orderA = a.frontmatter.order ?? Number.POSITIVE_INFINITY;
+          const orderB = b.frontmatter.order ?? Number.POSITIVE_INFINITY;
+          if (orderA !== orderB) {
+            return orderA - orderB;
+          }
+          return a.relPath.localeCompare(b.relPath);
+        })
+        .map((entry) => entry.relPath)
+        .filter((path) => path !== relPath);
+      const index = siblings.indexOf(selectedFile);
+      if (index !== -1) {
+        const ordered = [...siblings];
+        ordered.splice(index + 1, 0, relPath);
+        await assignOrders(ordered);
+        await store.refresh();
+      }
+    }
+
+    await store.openFile(relPath);
+  };
+
   commands.register({
-    id: "tree.new_note",
-    title: "New note",
-    run: async () => {
-      const { root } = store.getState();
-      if (!root) {
-        return;
-      }
-      const name = await promptText(app, {
-        title: "New note name",
-        initial: "untitled",
-        confirmLabel: "Create",
-      });
-      if (!name) {
-        return;
-      }
-      const fileName = /\.(md|txt)$/i.test(name) ? name : `${name}.md`;
-      const relPath = joinPath(selectedDir(), fileName);
-      const base = /\.md$/i.test(fileName) ? `# ${fileName.replace(/\.md$/i, "")}\n` : "";
-      const frontmatter = await lua.hook("new_note", relPath);
-      const contents = frontmatter ? `${frontmatter}\n${base}` : base;
-      await api.writeFile(root, relPath, contents);
-      undo.push({
-        label: `new note ${relPath}`,
-        run: async () => {
-          await api.trashPath(root, relPath);
-          await store.refresh();
-        },
-      });
-      await store.refresh();
-      await store.openFile(relPath);
-    },
+    id: "tree.add_node",
+    title: "Add node (after selected)",
+    run: () => addNode("sibling"),
+  });
+
+  commands.register({
+    id: "tree.add_child_node",
+    title: "Add child node",
+    run: () => addNode("child"),
   });
 
   commands.register({
@@ -880,15 +968,20 @@ export function mountShell(root: HTMLElement): void {
         runCommand("tree.delete");
         return;
       }
-      if (modifier && event.shiftKey && key === "n") {
+      if (modifier && event.altKey && key === "n") {
         event.preventDefault();
         runCommand("tree.new_folder");
+        return;
+      }
+      if (modifier && event.shiftKey && key === "n") {
+        event.preventDefault();
+        runCommand("tree.add_child_node");
         return;
       }
       if (modifier && !event.shiftKey && !event.altKey) {
         if (key === "n") {
           event.preventDefault();
-          runCommand("tree.new_note");
+          runCommand("tree.add_node");
           return;
         }
         if (key === "c") {
