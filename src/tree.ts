@@ -1,3 +1,4 @@
+import { icon } from "./icons";
 import type { TreeNode } from "./resolver";
 import type { RollupAggregate, RollupConfig } from "./rollup";
 
@@ -15,16 +16,18 @@ export function visibleNodes(roots: TreeNode[], expanded: ReadonlySet<string>): 
   return visible;
 }
 
-export function filterTree(nodes: TreeNode[], match: (openPath: string) => boolean): TreeNode[] {
+export function filterTree(nodes: TreeNode[], match: (node: TreeNode) => boolean): TreeNode[] {
   const result: TreeNode[] = [];
   for (const node of nodes) {
-    const children = filterTree(node.children, match);
     if (node.mirror) {
       continue;
     }
-    const selfMatch = node.openPath !== "";
-    const kept = selfMatch ? match(node.openPath) || children.length > 0 : children.length > 0;
-    if (kept) {
+    if (match(node)) {
+      result.push(node);
+      continue;
+    }
+    const children = filterTree(node.children, match);
+    if (children.length > 0) {
       result.push({ ...node, children });
     }
   }
@@ -55,7 +58,7 @@ export class TreeView {
   private dragPath: string | null = null;
   private rollups: Map<string, RollupAggregate> | null = null;
   private rollupConfig: RollupConfig | null = null;
-  private filter: ((openPath: string) => boolean) | null = null;
+  private filter: ((node: TreeNode) => boolean) | null = null;
 
   constructor(options: TreeViewOptions) {
     this.container = options.container;
@@ -110,7 +113,7 @@ export class TreeView {
     this.render();
   }
 
-  setFilter(match: ((openPath: string) => boolean) | null): void {
+  setFilter(match: ((node: TreeNode) => boolean) | null): void {
     this.filter = match;
     this.render();
   }
@@ -159,7 +162,11 @@ export class TreeView {
       label.className = "label";
       label.textContent = node.name;
 
-      item.append(twisty, label);
+      const nodeIcon = document.createElement("span");
+      nodeIcon.className = "node-icon";
+      nodeIcon.append(icon(node.isDir || node.relPath === "__dangling__" ? "folder" : "file", 13));
+
+      item.append(nodeIcon, twisty, label);
 
       if (node.mirror) {
         item.append(this.badge("◇", `also in: ${node.placements.join(", ")}`, "badge-mirror"));

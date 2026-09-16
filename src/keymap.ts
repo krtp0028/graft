@@ -15,6 +15,10 @@ export const DEFAULT_KEYMAP: readonly KeyBinding[] = [
   { chord: "Mod+Shift+F", command: "search.open", context: "global" },
   { chord: "Mod+W", command: "tab.close", context: "global" },
   { chord: "Mod+Shift+T", command: "tab.reopen_last", context: "global" },
+  { chord: "Mod+B", command: "markdown.bold", context: "global" },
+  { chord: "Mod+I", command: "markdown.italic", context: "global" },
+  { chord: "Mod+E", command: "markdown.code", context: "global" },
+  { chord: "Mod+K", command: "markdown.link", context: "global" },
 ];
 
 export interface Chord {

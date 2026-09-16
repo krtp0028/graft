@@ -5,18 +5,21 @@ import { commands } from "./commands";
 import { config } from "./config";
 import { createEditor } from "./editor";
 import { openHealthPanel } from "./health";
+import { icon } from "./icons";
 import { DEFAULT_KEYMAP, isMacPlatform, matchesEvent } from "./keymap";
 import type { KeyBinding } from "./keymap";
 import { isPreviewPosition, nextPreviewPosition } from "./layout";
 import type { PreviewPosition } from "./layout";
 import { LuaController } from "./lua";
-import { CommandPalette } from "./palette";
+import { insertLink, prefixLines, toggleHeading, wrapSelection } from "./markdown";
+import { CommandPalette, fuzzyMatch } from "./palette";
 import { baseName, parentDir } from "./paths";
 import { createPreview } from "./preview";
 import { promptText } from "./prompt";
 import { QuickOpen } from "./quickopen";
 import { rewriteReferences } from "./refs";
 import { effectiveTags, resolveVault } from "./resolver";
+import type { TreeNode } from "./resolver";
 import { SearchUi } from "./searchui";
 import { computeRollups } from "./rollup";
 import { VaultStore } from "./store";
@@ -34,33 +37,54 @@ export function mountShell(root: HTMLElement): void {
   const topbar = el("header", "topbar");
   const brand = el("span", "brand");
   brand.textContent = "Graft";
-  const openButton = el("button", "button");
-  openButton.textContent = "Open Folder";
-  const vaultPath = el("span", "vault-path");
-  const tagChips = el("span", "tag-chips");
-  const filterBadge = el("span", "filter-badge");
-  filterBadge.hidden = true;
+
+  const iconButton = (name: Parameters<typeof icon>[0], title: string): HTMLButtonElement => {
+    const button = document.createElement("button");
+    button.className = "toolbar-button";
+    button.title = title;
+    button.append(icon(name, 15));
+    return button;
+  };
+
+  const openButton = iconButton("folder", "Open folder (Ctrl+O)");
+  const addNodeButton = iconButton("add-node", "Add node after selected (Ctrl+N)");
+  const addChildButton = iconButton("add-child", "Add child node (Ctrl+Shift+N)");
+  const newFolderButton = iconButton("new-folder", "New folder (Ctrl+Alt+N)");
+  const saveButton = iconButton("save", "Save (Ctrl+S)");
+  const undoButton = iconButton("undo", "Undo last file operation");
+  const searchButton = iconButton("search", "Search vault (Ctrl+Shift+F)");
+  const quickOpenButton = iconButton("go-to", "Quick open (Ctrl+P)");
+  const previewButton = iconButton("preview", "Cycle preview position (Ctrl+Shift+V)");
+  const configButton = iconButton("settings", "Config health");
+
+  const divider = (): HTMLElement => el("span", "sep");
   const notice = el("span", "notice");
   notice.hidden = true;
-  const spacer = el("span", "spacer");
   const dirty = el("span", "dirty");
   dirty.textContent = "●";
   dirty.title = "Unsaved changes";
   dirty.hidden = true;
-  const configButton = el("button", "button");
-  configButton.textContent = "Config";
-  const previewButton = el("button", "button");
+
   topbar.append(
     brand,
+    divider(),
     openButton,
-    vaultPath,
-    tagChips,
-    filterBadge,
-    notice,
-    spacer,
-    dirty,
-    configButton,
+    divider(),
+    addNodeButton,
+    addChildButton,
+    newFolderButton,
+    divider(),
+    saveButton,
+    undoButton,
+    divider(),
+    searchButton,
+    quickOpenButton,
+    divider(),
     previewButton,
+    configButton,
+    el("span", "spacer"),
+    notice,
+    dirty,
   );
 
   const errorBanner = el("div", "error-banner");
@@ -74,18 +98,45 @@ export function mountShell(root: HTMLElement): void {
 
   const workspace = el("div", "workspace");
   const sidebar = el("aside", "sidebar");
+  const treeSearch = document.createElement("input");
+  treeSearch.className = "tree-search";
+  treeSearch.placeholder = "Filter nodes...";
   const treeContainer = el("div", "tree-container");
-  sidebar.append(treeContainer);
+  sidebar.append(treeSearch, treeContainer);
 
   const docArea = el("div", "doc-area");
   const editorPane = el("main", "editor-pane");
+  const formatBar = el("div", "format-bar");
+  const editorHost = el("div", "editor-host");
+  editorPane.append(formatBar, editorHost);
   const splitter = el("div", "splitter");
   const previewPane = el("section", "preview-pane");
   previewPane.textContent = "Open a note to see the preview";
   docArea.append(editorPane, splitter, previewPane);
 
+  const statusBar = el("footer", "status-bar");
+  const statusVault = el("span", "status-vault");
+  const statusFile = el("span", "status-file");
+  const statusType = el("span", "status-type");
+  const tagChips = el("span", "tag-chips");
+  const filterBadge = el("span", "filter-badge");
+  filterBadge.hidden = true;
+  const statusWords = el("span", "status-words");
+  const statusCursor = el("span", "status-cursor");
+  statusBar.append(
+    statusVault,
+    divider(),
+    statusFile,
+    statusType,
+    el("span", "spacer"),
+    tagChips,
+    filterBadge,
+    statusWords,
+    statusCursor,
+  );
+
   workspace.append(sidebar, docArea);
-  app.append(topbar, tabBar, errorBanner, conflictBanner, workspace);
+  app.append(topbar, tabBar, errorBanner, conflictBanner, workspace, statusBar);
   root.replaceChildren(app);
 
   let previewPosition: PreviewPosition = "right";
@@ -93,14 +144,21 @@ export function mountShell(root: HTMLElement): void {
     previewPosition = position;
     docArea.dataset.preview = position;
     docArea.style.removeProperty("--preview-size");
-    previewButton.textContent = `Preview: ${position[0].toUpperCase()}${position.slice(1)}`;
+    previewButton.title = `Preview: ${position} (Ctrl+Shift+V cycles)`;
   };
   const cyclePreview = (): void => {
     applyPreviewPosition(nextPreviewPosition(previewPosition));
   };
   applyPreviewPosition(previewPosition);
 
-  const editorView = createEditor(editorPane, store);
+  const editorView = createEditor(editorHost, store, {
+    onCursor: (info) => {
+      statusCursor.textContent =
+        info.selected > 0
+          ? `Ln ${info.line}, Col ${info.column} (${info.selected} sel)`
+          : `Ln ${info.line}, Col ${info.column}`;
+    },
+  });
   createPreview(previewPane, store);
 
   let noticeTimer: number | undefined;
@@ -243,15 +301,32 @@ export function mountShell(root: HTMLElement): void {
     updateTagChips();
   };
 
-  const setFilter = (label: string, match: ((openPath: string) => boolean) | null): void => {
+  const setFilter = (label: string, match: ((node: TreeNode) => boolean) | null): void => {
     filterActive = match !== null;
     tree.setFilter(match);
     filterBadge.hidden = !filterActive;
     filterBadge.textContent = filterActive ? `Filter: ${label} (Esc clears)` : "";
   };
 
-  const tasksFilter = (openPath: string): boolean =>
-    (currentByPath.get(openPath)?.metrics.tasksOpen ?? 0) > 0;
+  const tasksFilter = (node: TreeNode): boolean =>
+    node.openPath !== "" && (currentByPath.get(node.openPath)?.metrics.tasksOpen ?? 0) > 0;
+
+  treeSearch.addEventListener("input", () => {
+    const query = treeSearch.value.trim();
+    if (query === "") {
+      setFilter("", null);
+      return;
+    }
+    setFilter(`"${query}"`, (node) => fuzzyMatch(query, node.name));
+  });
+  treeSearch.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      treeSearch.value = "";
+      setFilter("", null);
+      treeSearch.blur();
+    }
+  });
 
   const selectedTarget = (): string | null => {
     const selected = tree.getSelected();
@@ -622,7 +697,7 @@ export function mountShell(root: HTMLElement): void {
           matching.add(entry.relPath);
         }
       }
-      setFilter(`#${clean}`, (openPath) => matching.has(openPath));
+      setFilter(`#${clean}`, (node) => node.openPath !== "" && matching.has(node.openPath));
     },
   });
 
@@ -908,7 +983,105 @@ export function mountShell(root: HTMLElement): void {
     commands.run(id).catch((error: unknown) => store.reportError(error));
   };
 
+  const fillFormatBar = (): void => {
+    const make = (label: string, title: string, action: () => void): HTMLButtonElement => {
+      const button = document.createElement("button");
+      button.className = "format-button";
+      button.textContent = label;
+      button.title = title;
+      button.addEventListener("click", action);
+      return button;
+    };
+    formatBar.append(
+      make("B", "Bold (Ctrl+B)", () => runCommand("markdown.bold")),
+      make("I", "Italic (Ctrl+I)", () => runCommand("markdown.italic")),
+      make("S", "Strikethrough", () => runCommand("markdown.strike")),
+      make("</>", "Inline code (Ctrl+E)", () => runCommand("markdown.code")),
+      make("Link", "Insert link (Ctrl+K)", () => runCommand("markdown.link")),
+      divider(),
+      make("H1", "Heading 1", () => runCommand("markdown.h1")),
+      make("H2", "Heading 2", () => runCommand("markdown.h2")),
+      make("H3", "Heading 3", () => runCommand("markdown.h3")),
+      divider(),
+      make("•", "Bullet list", () => runCommand("markdown.list")),
+      make("☐", "Task item", () => runCommand("markdown.task")),
+      make("❝", "Quote", () => runCommand("markdown.quote")),
+    );
+  };
+
+  const withEditor =
+    (action: () => void): (() => void) =>
+    () => {
+      if (store.getState().activePath) {
+        action();
+      }
+    };
+
+  commands.register({
+    id: "markdown.bold",
+    title: "Bold",
+    run: withEditor(() => wrapSelection(editorView, "**", "**")),
+  });
+  commands.register({
+    id: "markdown.italic",
+    title: "Italic",
+    run: withEditor(() => wrapSelection(editorView, "*", "*")),
+  });
+  commands.register({
+    id: "markdown.strike",
+    title: "Strikethrough",
+    run: withEditor(() => wrapSelection(editorView, "~~", "~~")),
+  });
+  commands.register({
+    id: "markdown.code",
+    title: "Inline code",
+    run: withEditor(() => wrapSelection(editorView, "`", "`")),
+  });
+  commands.register({
+    id: "markdown.link",
+    title: "Insert link",
+    run: withEditor(() => insertLink(editorView)),
+  });
+  commands.register({
+    id: "markdown.h1",
+    title: "Heading 1",
+    run: withEditor(() => toggleHeading(editorView, 1)),
+  });
+  commands.register({
+    id: "markdown.h2",
+    title: "Heading 2",
+    run: withEditor(() => toggleHeading(editorView, 2)),
+  });
+  commands.register({
+    id: "markdown.h3",
+    title: "Heading 3",
+    run: withEditor(() => toggleHeading(editorView, 3)),
+  });
+  commands.register({
+    id: "markdown.list",
+    title: "Bullet list",
+    run: withEditor(() => prefixLines(editorView, "- ")),
+  });
+  commands.register({
+    id: "markdown.task",
+    title: "Task item",
+    run: withEditor(() => prefixLines(editorView, "- [ ] ")),
+  });
+  commands.register({
+    id: "markdown.quote",
+    title: "Quote",
+    run: withEditor(() => prefixLines(editorView, "> ")),
+  });
+  fillFormatBar();
+
   openButton.addEventListener("click", () => runCommand("vault.open"));
+  addNodeButton.addEventListener("click", () => runCommand("tree.add_node"));
+  addChildButton.addEventListener("click", () => runCommand("tree.add_child_node"));
+  newFolderButton.addEventListener("click", () => runCommand("tree.new_folder"));
+  saveButton.addEventListener("click", () => runCommand("file.save"));
+  undoButton.addEventListener("click", () => runCommand("edit.undo"));
+  searchButton.addEventListener("click", () => runCommand("search.open"));
+  quickOpenButton.addEventListener("click", () => runCommand("file.quick_open"));
   previewButton.addEventListener("click", () => runCommand("preview.cycle_position"));
   configButton.addEventListener("click", () => runCommand("config.health"));
 
@@ -1120,7 +1293,13 @@ export function mountShell(root: HTMLElement): void {
   let lastActivePath: string | null | undefined;
   let lastDirty: boolean | undefined;
   store.subscribe((state) => {
-    vaultPath.textContent = state.root ?? "";
+    statusVault.textContent = state.root ?? "no vault open";
+    statusFile.textContent = state.activePath ?? "";
+    statusType.textContent = state.activePath
+      ? state.activePath.toLowerCase().endsWith(".md")
+        ? "Markdown"
+        : "Plain text"
+      : "";
     dirty.hidden = !(state.dirty && state.activePath !== null);
     errorBanner.hidden = state.error === null;
     errorBanner.textContent = state.error ?? "";
@@ -1152,6 +1331,9 @@ export function mountShell(root: HTMLElement): void {
     }
     renderTabBar();
     scheduleSessionSave();
+
+    const activeEntry = state.activePath ? currentByPath.get(state.activePath) : undefined;
+    statusWords.textContent = activeEntry ? `${activeEntry.metrics.words} words` : "";
   });
 }
 

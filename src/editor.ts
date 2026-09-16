@@ -52,7 +52,21 @@ function fontSizeTheme(fontSize: number): ReturnType<typeof EditorView.theme> {
 
 const isMarkdownPath = (path: string): boolean => path.toLowerCase().endsWith(".md");
 
-export function createEditor(parent: HTMLElement, store: VaultStore): EditorView {
+export interface CursorInfo {
+  line: number;
+  column: number;
+  selected: number;
+}
+
+export interface EditorOptions {
+  onCursor?: (info: CursorInfo) => void;
+}
+
+export function createEditor(
+  parent: HTMLElement,
+  store: VaultStore,
+  options: EditorOptions = {},
+): EditorView {
   const language = new Compartment();
   const font = new Compartment();
   const wrap = new Compartment();
@@ -60,6 +74,16 @@ export function createEditor(parent: HTMLElement, store: VaultStore): EditorView
   let saveTimer: number | undefined;
   let currentPath: string | null = null;
   const states = new Map<string, EditorState>();
+
+  const reportCursor = (view: EditorView): void => {
+    const range = view.state.selection.main;
+    const line = view.state.doc.lineAt(range.head);
+    options.onCursor?.({
+      line: line.number,
+      column: range.head - line.from + 1,
+      selected: range.to - range.from,
+    });
+  };
 
   const buildExtensions = () => [
     basicSetup,
@@ -74,6 +98,9 @@ export function createEditor(parent: HTMLElement, store: VaultStore): EditorView
         saveTimer = window.setTimeout(() => {
           void store.saveActive();
         }, config.getState().config.editor.autosaveDelayMs);
+      }
+      if (update.selectionSet || update.docChanged) {
+        reportCursor(update.view);
       }
     }),
     keymap.of([

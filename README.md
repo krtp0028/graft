@@ -11,6 +11,7 @@ Lightweight hierarchical Markdown notes. A native desktop app (Tauri 2 + Rust + 
 - **Preview anywhere** — hidden / right / left / bottom / top, cycled with `Ctrl+Shift+V`, draggable splitter, scroll sync
 - **Deep configuration** — layered TOML config, theme files, `custom.css`, hot reload, config health panel
 - **Lua scripting** — `init.lua` with commands, hooks, and keymaps
+- **CherryTree-style UI** — dense toolbar, icon tree with strong selection, Markdown formatting bar, note tabs, and a status bar with node metadata and cursor position
 - **Lightweight** — ~5 MB exe, ~1.8 MB installer, ~270 ms cold start, plain files on disk
 
 ## Install
@@ -138,8 +139,9 @@ Hooks: `startup`, `open`, `save`, `new_note`, `tree_change`. Command return valu
 | `Alt+↑` / `Alt+↓`                           | Reorder sibling (tree focus)                          |
 | `Alt+drag` onto a folder                    | Add `also_under` mirror                               |
 | Drag onto a folder                          | Set `parent`                                          |
-| `Ctrl+Z` (tree focus)                       | Undo last file operation                              |
-| `Ctrl+W` / `Ctrl+Tab`                       | Close / cycle tabs                                    |
+| `Ctrl+Z` (tree focus) | Undo last file operation |
+| `Ctrl+B` / `Ctrl+I` / `Ctrl+E` / `Ctrl+K` | Bold / italic / inline code / link (editor) |
+| `Ctrl+W` / `Ctrl+Tab` | Close / cycle tabs |
 
 ## Development
 
